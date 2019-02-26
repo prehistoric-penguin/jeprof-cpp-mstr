@@ -14,3 +14,4 @@ set(CMAKE_CXX_STANDARD 14)
 add_definitions("-D_GLIBCXX_USE_CXX11_ABI=1")
 
 add_subdirectory("src")
+add_subdirectory("tools/random-program-generator")
