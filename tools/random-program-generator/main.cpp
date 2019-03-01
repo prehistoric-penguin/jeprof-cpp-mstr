@@ -21,7 +21,7 @@ class Function {
  public:
   Function(std::string name) : name_(name) {
     static const std::string allocStatement =
-        (boost::format("void * ptr = malloc(%d)") % FLAGS_mallocSize).str();
+        (boost::format("void * ptr = malloc(%d);") % FLAGS_mallocSize).str();
     statements_.emplace_back(allocStatement);
   }
   std::string Name() const { return name_; }
