@@ -5,7 +5,9 @@ add_executable(
 
 target_link_libraries(
 	jeprof-cpp
-	${LIBGLOG_LIBRARIES}
 	${GFLAGS_LIBRARIES}
+  ${LIBGLOG_LIBRARIES}
+  ${Boost_FILESYSTEM_LIBRARY}
+  ${Boost_SYSTEM_LIBRARY}
 	Threads::Threads
 )
