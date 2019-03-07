@@ -422,7 +422,7 @@ void AddEntries(Profile& profile, PCS& pcs, const std::vector<size_t>& stack,
   for (auto e : stack) {
     pcs.data_[e] = 1;
   }
-  profile.data_[stack] = count;
+  profile.data_[stack] += count;
   // AddEntry(profile, stack, count);
 }
 
@@ -1083,7 +1083,7 @@ void RemoveUninterestingFrames(
       }
       path.emplace_back(addr);
     }
-    result.emplace(path, count);
+    result[path] += count;
     // AddEntry(result, path, count);
   }
   LOG(INFO) << "Result after remove uninteresting frames:" << std::hex << result;
@@ -1134,7 +1134,7 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
             [&cumulative](const std::string& lhs, const std::string& rhs) {
               auto lv = cumulative[lhs];
               auto rv = cumulative[rhs];
-              return lv != rv ? rv < lv : rhs < lhs;
+              return lv != rv ? rv < lv : lhs < rhs;
             });
   auto last = std::min(nodeCount - 1, list.size() - 1);
   while (last >= 0 && cumulative[list[last]] <= nodeLimit) --last;
@@ -1220,7 +1220,7 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
   for (const auto& r : raw.data_) {
     n = r.second;
     auto translated = TranslateStack(symbols, fullnameToshortnameMap, r.first);
-    for (int i = 1, sz = static_cast<int>(translated.size() - 1); i < sz; ++i) {
+    for (int i = 1, sz = static_cast<int>(translated.size()); i < sz; ++i) {
       auto& src = translated[i];
       auto& dst = translated[i - 1];
 
@@ -1246,7 +1246,7 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
     bool keep = false;
     if (inDegree[dst] == 0) {
       keep = true;
-    } else if (static_cast<size_t>(abs(n)) < edgeLimit) {
+    } else if (static_cast<size_t>(abs(n)) <= edgeLimit) {
       keep = false;
     } else if (outDegree[src] >= static_cast<size_t>(FLAGS_maxDegree) ||
                inDegree[dst] >= static_cast<size_t>(FLAGS_maxDegree)) {
@@ -1302,7 +1302,7 @@ std::string Units() {
 std::map<std::string, size_t> FlatProfile(
     const std::map<std::vector<std::string>, size_t>& profile) {
   std::map<std::string, size_t> result;
-  for (const auto& p : profile) result.emplace(p.first.front(), p.second);
+  for (const auto& p : profile) result[p.first.front()] += p.second;
   return result;
 }
 
@@ -1311,7 +1311,7 @@ std::map<std::string, size_t> CumulativeProfile(
   std::map<std::string, size_t> result;
   for (const auto& p : profile) {
     for (const auto& a : p.first) {
-      result.emplace(a, p.second);
+      result[a] += p.second;
     }
   }
   return result;
@@ -1323,6 +1323,8 @@ std::map<std::vector<std::string>, size_t> ReduceProfile(
   std::map<std::string, std::string> fullnameToShortnameMap;
   FillFullnameToshortnameMap(symbols, fullnameToShortnameMap);
 
+  LOG(INFO) << "Get fullname to shortname map:"
+    << fullnameToShortnameMap;
   for (const auto& p : profile.data_) {
     auto count = p.second;
     auto translated = TranslateStack(symbols, fullnameToShortnameMap, p.first);
@@ -1335,7 +1337,7 @@ std::map<std::vector<std::string>, size_t> ReduceProfile(
       path.emplace_back(e);
     }
     LOG(INFO) << "Reduce line:" << translated << ", into:" << path;
-    result.emplace(path, count);
+    result[path] += count;
   }
   return result;
 }
