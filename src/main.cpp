@@ -717,7 +717,6 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
     const auto debugLib = DebuggingLibrary(libName);
     if (!debugLib.empty()) libName = debugLib;
 
-    std::vector<size_t> contained;
     size_t startPCIndex, finishPCIndex;
     // TODO lowbound or upperbound
     for (finishPCIndex = pcs.size(); finishPCIndex > 0; --finishPCIndex) {
@@ -727,9 +726,8 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
       if (pcs[startPCIndex - 1] < entry.start_) break;
     }
 
-    std::move(std::next(pcs.begin(), startPCIndex),
-              std::next(pcs.begin(), finishPCIndex),
-              std::back_inserter(contained));
+    std::vector<size_t> contained{std::next(pcs.begin(), startPCIndex), std::next(pcs.begin(), finishPCIndex)};
+    pcs.erase(std::next(pcs.begin(), startPCIndex), std::next(pcs.begin(), finishPCIndex));
 
     LOG(INFO) << "Start to extract symbols for lib:" << libName
       << ", get contained pc set:" << std::hex << contained;
@@ -769,6 +767,7 @@ void MapToSymbols(const std::string& image, size_t offset,
     << std::endl << std::hex << pcList;
 
   std::ofstream ofs(tmpFileSym);
+  LOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
   auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
   for (auto pc : pcList) {
     ofs << toHexStr(AddressSub(pc, offset)) << std::endl;
@@ -799,9 +798,12 @@ void MapToSymbols(const std::string& image, size_t offset,
     std::string fileLineNum = line;
 
     if (IsValidSepAddress(sepAddress) && (fullFunction == kSepSymbol)) {
+      LOG(INFO) << "Meet sepsymbol for pcstr:" << std::hex << pcList[count];
       ++count;
       continue;
     }
+    LOG(INFO) << "Now deal with fullfunction:" << fullFunction
+      << ", fileLineNum" << fileLineNum;
     // Turn windows-style path into unix-style
     // boost::replace_all(fileLineNum, R"(\\)", "/");
     auto pc = pcList[count];
