@@ -99,6 +99,21 @@ struct Context {
   Symbols symbols_;
 };
 
+inline std::ostream& operator<<(std::ostream& out,
+                                const Profile& p) {
+  out << '[' << p.data_ << ']';
+  return out;
+}
+
+inline std::ostream& operator<<(std::ostream& out,
+                                const LibraryEntry& l) {
+  out << '<' << l.lib_ << std::hex << "," << l.start_
+   << "," << l.finish_ << "," << l.offset_ << '>';
+  return out;
+}
+
+
+
 template <typename Arg, typename... Ts>
 std::string ShellEscape(Arg i, Ts... all) {
   static_assert(std::is_same<Arg, std::string>::value ||
@@ -367,6 +382,10 @@ Context ReadThreadedHeapProfile(const std::string& program,
   }
   Context context = {std::string("heap"),      1,   profile,  threadProfiles,
                      ParseLibraries(map, pcs), pcs, Symbols{}};
+  LOG(INFO) << "Parsed profile:\n" << std::hex << profile.data_ << std::endl
+    << "Parsed threadprofile:\n" << std::hex << threadProfiles.data_ << std::endl
+    << "Parsed libraries:\n" << std::hex << context.libs_ << std::endl
+    << "Parsed pcset:\n" << std::hex << pcs.data_ << std::endl;
   return context;
 }
 
@@ -824,10 +843,11 @@ void MapToSymbols(const std::string& image, size_t offset,
       std::vector<std::string>& sym = symbols.data_[pc];
       sym.insert(sym.begin(), {function, fileLineNum, fullFunction});
       LOG(INFO)
-          << (boost::format("%016x => %s") % pc % boost::join(sym, " ")).str();
+          << (boost::format("cur symbol line:%016x => %s") % pc % boost::join(sym, " ")).str();
       if (!IsValidSepAddress(sepAddress)) ++count;
     }
   }
+  LOG(INFO) << "Now the symbol is:" << std::hex << symbols.data_;
 }
 
 bool MapSymbolsWithNM(const std::string& image, size_t offset,
@@ -1082,11 +1102,17 @@ void FilterAndPrint(Profile profile, const Symbols& symbols,
                     const std::vector<LibraryEntry>& libs,
                     const std::vector<std::string>& threads) {
   auto total = TotalProfile(profile.data_);
+  LOG(INFO) << "Total Profile:" << std::hex << total;
   RemoveUninterestingFrames(symbols, profile);
+  LOG(INFO) << "After remove unteresting frames:" << std::hex << profile.data_;
   auto calls = ExtractCalls(symbols, profile);
+  LOG(INFO) << "Extracted calls:" << std::hex << calls;
   auto reduced = ReduceProfile(symbols, profile);
+  LOG(INFO) << "The reduced profile:" << std::hex << reduced;
   auto flat = FlatProfile(reduced);
+  LOG(INFO) << "The flat profile:" << std::hex << flat;
   auto cumulative = CumulativeProfile(reduced);
+  LOG(INFO) << "The cumulative profile:" << std::hex << cumulative;
 
   PrintDot(FLAGS_programName, symbols, profile, flat, cumulative, total);
 }
