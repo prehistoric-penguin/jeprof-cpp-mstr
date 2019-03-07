@@ -384,7 +384,7 @@ std::vector<size_t> FixCallerAddresses(const std::string& stack) {
     *it = AddressSub(*it, 0x1);
   }
 
-  LOG(INFO) << "Caller address from:" << stack << ", to:" << numAddrs;
+  LOG(INFO) << "Caller address from:" << stack << ", to:" << std::hex << numAddrs;
   return numAddrs;
 }
 
@@ -798,7 +798,7 @@ void MapToSymbols(const std::string& image, size_t offset,
     boost::erase_all(line, "\r");
     std::string fileLineNum = line;
 
-    if (IsValidSepAddress(sepAddress)&& (fullFunction == kSepSymbol)) {
+    if (IsValidSepAddress(sepAddress) && (fullFunction == kSepSymbol)) {
       ++count;
       continue;
     }
@@ -834,6 +834,7 @@ bool MapSymbolsWithNM(const std::string& image, size_t offset,
   LOG(INFO) << "Start map symbols for image:" << image
     << ", with offset:" << std::hex << offset;
   auto symbolTable = GetProcedureBoundaries(image, ".", sepAddress);
+  LOG(INFO) << "Get symbol table:" << symbolTable.data_;
   if (symbolTable.data_.empty()) return false;
 
   // names sorted by value in symbol table
@@ -868,7 +869,7 @@ bool MapSymbolsWithNM(const std::string& image, size_t offset,
     if (mpc < symbolTable.data_[fullName][1]) {
       symbols.data_.emplace(pc, std::vector<std::string>{name, "?", fullName});
     } else {
-      std::string pcStr = (boost::format("%016x") % pc).str();
+      std::string pcStr = (boost::format("0x%016x") % pc).str();
       symbols.data_.emplace(pc, std::vector<std::string>{pcStr, "?", pcStr});
     }
   }
@@ -912,7 +913,6 @@ SymbolTable GetProcedureBoundaries(const std::string& image,
   std::string toDevNull = ">/dev/null 2>&1";
 
   // This line seems a bug in the perl source code, image -> $image
-  // if (system(ShellEscape($nm, "--demangle", "image") . $to_devnull) == 0) {
   if (System(ShellEscape(kNm, "--demangle", "image") + toDevNull)) {
     demangleFlag = "--demangle";
     cppfiltFlag = "";
@@ -981,6 +981,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
 
       if (startVal == lastStart && (type == 't' || type == 'T')) {
         routine = thisRoutine;
+        continue;
       } else if (startVal == lastStart) {
         continue;
       }
