@@ -5,7 +5,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 project(${PACKAGE_NAME} C CXX)
 
-find_package(Boost COMPONENTS system filesystem REQUIRED)
+find_package(Boost COMPONENTS system filesystem regex REQUIRED)
 find_package(GTest REQUIRED) 
 find_package(GFlags REQUIRED)
 find_package(GLog REQUIRED) 

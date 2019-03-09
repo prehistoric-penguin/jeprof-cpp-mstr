@@ -9,6 +9,7 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/format.hpp>
+#include <boost/regex.hpp>
 #include <cctype>
 #include <csignal>
 #include <fstream>
@@ -125,8 +126,7 @@ bool IsValidSepAddress(size_t x) {
   return x != std::numeric_limits<size_t>::max();
 }
 
-std::vector<std::string> RegexMatch(const std::string& target,
-                                    const std::regex& re);
+boost::smatch RegexMatch(const std::string& target, const boost::regex& re);
 void Usage();
 std::string ReadProfileHeader(std::ifstream& ifs);
 bool IsSymbolizedProfileFile();
@@ -307,7 +307,8 @@ Context ReadThreadedHeapProfile(const std::string& program,
   std::string type = "unknown";
   static const std::string kHeapV2 = "heap_v2/";
 
-  auto matchRes = RegexMatch(header, std::regex(R"(^heap_v2/(\d+))"));
+  static const boost::regex kHeapAdjustPattern(R"(^heap_v2/(\d+))");
+  auto matchRes = RegexMatch(header, kHeapAdjustPattern);
 
   if (!matchRes.empty()) {
     type = "_v2";
@@ -344,15 +345,15 @@ Context ReadThreadedHeapProfile(const std::string& program,
     }
 
     boost::trim(line);
-    auto matchRes1 = RegexMatch(line, std::regex(R"(^@\s+(.*)$)"));
+    static const boost::regex kPattern1(R"(^@\s+(.*)$)");
+    auto matchRes1 = RegexMatch(line, kPattern1);
     if (!matchRes1.empty()) {
       stack = matchRes1[1];
       continue;
     }
-    auto matchRes2 = RegexMatch(
-        line,
-        std::regex(
-            R"(^\s*(t(\*|\d+)):\s+(\d+):\s+(\d+)\s+\[\s*(\d+):\s+(\d+)\]$)"));
+    static const boost::regex kPattern2(
+        R"(^\s*(t(\*|\d+)):\s+(\d+):\s+(\d+)\s+\[\s*(\d+):\s+(\d+)\]$)");
+    auto matchRes2 = RegexMatch(line, kPattern2);
     if (!matchRes2.empty()) {
       if (stack.empty()) {
         // Still in the header, so this is just a per-thread summary
@@ -466,13 +467,10 @@ std::vector<std::string> ReadMappedLibraries(std::ifstream& ifs) {
   return result;
 }
 
-std::vector<std::string> RegexMatch(const std::string& target,
-                                    const std::regex& re) {
-  std::smatch base;
-  if (std::regex_match(target, base, re)) {
-    return {std::begin(base), std::end(base)};
-  }
-  return {};
+boost::smatch RegexMatch(const std::string& target, const boost::regex& re) {
+  boost::smatch base;
+  if (boost::regex_match(target, base, re)) return base;
+  return boost::smatch{};
 }
 
 std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
@@ -484,8 +482,9 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
   size_t start, finish, offset;
   std::string lib;
   std::vector<LibraryEntry> result;
+  static const boost::regex kBuildNumberPattern(R"(^\s*build=(.*)$)");
   for (const auto& line : map) {
-    auto buildMatchRes = RegexMatch(line, std::regex(R"(^\s*build=(.*)$)"));
+    auto buildMatchRes = RegexMatch(line, kBuildNumberPattern);
     if (!buildMatchRes.empty()) {
       buildVar = buildMatchRes[1];
       LOG(INFO) << "Build variable:" << buildVar;
@@ -495,10 +494,9 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
     do {
       // 4f000000-4f015000 r-xp 00000000 03:01 12845071   /lib/ld-2.3.2.so
       // TODO case insensitive
-      auto matchResult1 = RegexMatch(
-          line,
-          std::regex(
-              R"(^([[:xdigit:]]+)-([[:xdigit:]]+)\s+..x.\s+([[:xdigit:]]+)\s+\S+:\S+\s+\d+\s+(\S+\.(so|dll|dylib|bundle)((\.\d+)+\w*(\.\d+){0,3})?)$)"));
+      static const boost::regex kPattern1(
+          R"(^([[:xdigit:]]+)-([[:xdigit:]]+)\s+..x.\s+([[:xdigit:]]+)\s+\S+:\S+\s+\d+\s+(\S+\.(so|dll|dylib|bundle)((\.\d+)+\w*(\.\d+){0,3})?)$)");
+      auto matchResult1 = RegexMatch(line, kPattern1);
       if (!matchResult1.empty()) {
         start = std::stoull(matchResult1[1], nullptr, 16);
         finish = std::stoull(matchResult1[2], nullptr, 16);
@@ -511,10 +509,10 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
       }
 
       // 4e000000-4e015000: /lib/ld-2.3.2.so
-      auto matchResult2 = RegexMatch(
-          line,
-          std::regex(
-              R"(\s*([[:xdigit:]]+)-([[:xdigit:]]+):\s*(\S+\.so(\.\d+)*)$)"));
+      static const boost::regex kPattern2(
+          R"(\s*([[:xdigit:]]+)-([[:xdigit:]]+):\s*(\S+\.so(\.\d+)*)$)");
+      auto matchResult2 = RegexMatch(line, kPattern2);
+
       if (!matchResult2.empty()) {
         start = std::stoull(matchResult2[1], nullptr, 16);
         finish = std::stoull(matchResult2[2], nullptr, 16);
@@ -528,10 +526,9 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
 
       // 00400000-00404000 r-xp 00000000 08:01 799604 /usr/bin/w.procps
       // TODO case insensitive
-      auto matchResult3 = RegexMatch(
-          line,
-          std::regex(
-              R"(^([[:xdigit:]]+)-([[:xdigit:]]+)\s+..x.\s+([[:xdigit:]]+)\s+\S+:\S+\s+\d+\s+(\S+)$)"));
+      static const boost::regex kPattern3(
+          R"(^([[:xdigit:]]+)-([[:xdigit:]]+)\s+..x.\s+([[:xdigit:]]+)\s+\S+:\S+\s+\d+\s+(\S+)$)");
+      auto matchResult3 = RegexMatch(line, kPattern3);
       // TODO soft link name deal
       // /usr/bin/w /usr/bin/w.procps
       if (!matchResult3.empty() && matchResult3[4] == programName) {
@@ -548,10 +545,9 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
       // For FreeBSD 10.0
       // 0x800600000 0x80061a000 26 0 0xfffff800035a0000 r-x 75 33 0x1004 COW
       // NC vnode /libexec/ld-elf.so.1
-      auto matchResult4 = RegexMatch(
-          line,
-          std::regex(
-              R"(^(0x[[:xdigit:]]+)\s(0x[[:xdigit:]]+)\s\d+\s\d+\s0x[[:xdigit:]]+\sr-x\s\d+\s\d+\s0x\d+\s(COW|NCO)\s(NC|NNC)\svnode\s(\S+\.so(\.\d+)*)$)"));
+      static const boost::regex kPattern4(
+          R"(^(0x[[:xdigit:]]+)\s(0x[[:xdigit:]]+)\s\d+\s\d+\s0x[[:xdigit:]]+\sr-x\s\d+\s\d+\s0x\d+\s(COW|NCO)\s(NC|NNC)\svnode\s(\S+\.so(\.\d+)*)$)");
+      auto matchResult4 = RegexMatch(line, kPattern4);
       if (!matchResult4.empty()) {
         start = std::stoull(matchResult4[1], nullptr, 16);
         finish = std::stoull(matchResult4[2], nullptr, 16);
@@ -568,7 +564,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
       continue;
     }
     // Expand "$build" variable if avalable;
-    lib = std::regex_replace(lib, std::regex(R"(\$build\b)"), buildVar);
+    lib = boost::regex_replace(lib, boost::regex(R"(\$build\b)"), buildVar);
     lib = FindLibrary(lib);
     std::string debuggingLib = DebuggingLibrary(lib);
     if (debuggingLib.empty()) {
@@ -698,12 +694,13 @@ std::vector<std::string> ReadMemoryMap(std::ifstream& ifs) {
   std::string buildVar;
   std::string line;
 
+  static const boost::regex kBuildNumberPattern(R"(^\s*build=(.*))");
   while (std::getline(ifs, line)) {
     boost::erase_all(line, "\r");
-    auto matchRes = RegexMatch(line, std::regex(R"(^\s*build=(.*))"));
+    auto matchRes = RegexMatch(line, kBuildNumberPattern);
     if (!matchRes.empty()) buildVar = matchRes[1];
 
-    std::regex_replace(line, std::regex(R"(\$build\b)"), buildVar);
+    boost::regex_replace(line, boost::regex(R"(\$build\b)"), buildVar);
     result.emplace_back(line);
   }
   return result;
@@ -908,7 +905,7 @@ std::string ShortFunctionName(const std::string& fullName) {
   auto name = fullName;
   auto replace = [](const std::string& s, const std::string& re,
                     const std::string& fmt) {
-    return std::regex_replace(s, std::regex(re), fmt);
+    return boost::regex_replace(s, boost::regex(re), fmt);
   };
   while (true) {
     auto r = replace(name, R"(\([^()]*\)(\s*const)?)", "");
@@ -921,7 +918,7 @@ std::string ShortFunctionName(const std::string& fullName) {
     name = r;
   }
 
-  return std::regex_replace(name, std::regex(R"(^.*\s+(\w+::))"), "$&");
+  return boost::regex_replace(name, boost::regex(R"(^.*\s+(\w+::))"), "$&");
 }
 
 SymbolTable GetProcedureBoundaries(const std::string& image,
@@ -983,7 +980,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
                                          const auto& start, const auto& last) {
     if (name.empty()) return;
     if (regex.empty() || regex == "." ||
-        !RegexMatch(name, std::regex(regex)).empty()) {
+        !RegexMatch(name, boost::regex(regex)).empty()) {
       size_t startVal = std::stoull(start, nullptr, 16);
       size_t lastVal = std::stoull(last, nullptr, 16);
 
@@ -997,13 +994,12 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
   std::string lastStart = "0";
   for (auto line : resultSet) {
     boost::erase_all(line, "\r");
-
-    auto matchRes =
-        RegexMatch(line, std::regex(R"(^\s*([0-9a-f]+) (.) (..*))"));
+    static const boost::regex kSymbolPattern(R"(^\s*([0-9a-f]+) (.) (..*))");
+    auto matchRes = RegexMatch(line, kSymbolPattern);
     if (!matchRes.empty()) {
       // LOG(INFO) << "Line matched:" << line;
       auto startVal = matchRes[1];
-      char type = matchRes[2][0];
+      char type = (matchRes[2].str())[0];
       std::string thisRoutine = matchRes[3];
 
       if (startVal == lastStart && (type == 't' || type == 'T')) {
@@ -1238,9 +1234,9 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
   // b compare to a
   std::sort(edgeList.begin(), edgeList.end(),
             [](const auto& lhs, const auto& rhs) {
-            const auto& lv = lhs.get().second;
-            const auto& rv = rhs.get().second;
-            return lv != rv ? rv < lv : lhs.get() < rhs.get();
+              const auto& lv = lhs.get().second;
+              const auto& rv = rhs.get().second;
+              return lv != rv ? rv < lv : lhs.get() < rhs.get();
             });
 
   std::map<std::string, size_t> outDegree, inDegree;
@@ -1380,7 +1376,7 @@ std::vector<std::string> TranslateStack(
       }
 
       /*
-      if (!RegexMatch(func, std::regex(R"Callback.*::Run$")).empty()) {
+      if (!RegexMatch(func, boost::regex(R"Callback.*::Run$")).empty()) {
         std::string caller = (i > 0) ? addrs[i - 1] : 0;
         func = "Run#" + ShortIdFor(caller);
       }
@@ -1405,10 +1401,11 @@ void FillFullnameToshortnameMap(
     std::map<std::string, std::string>& fullnameToShortnameMap) {
   std::map<std::string, std::string> shortnamesSeenOnce;
   std::set<std::string> shortNamesSeenMoreThanOnce;
+  static const boost::regex kAddressPattern(R"(.*<[[:xdigit:]]+>$)");
   for (const auto& s : symbols.data_) {
     const auto& shortName = s.second[0];
     const auto& fullName = s.second[2];
-    if (RegexMatch(fullName, std::regex(R"(.*<[[:xdigit:]]+>$)")).empty()) {
+    if (RegexMatch(fullName, kAddressPattern).empty()) {
       LOG(INFO) << "Skip function full name not end with address:" << fullName;
       continue;
     }
@@ -1421,13 +1418,14 @@ void FillFullnameToshortnameMap(
   }
 
   // TODO: This can be faster
+  static const boost::regex kAddressPattern2(R"(<0*([^>]*)>$)");
   for (const auto& s : symbols.data_) {
     const auto& shortName = s.second[0];
     const auto& fullName = s.second[2];
 
     if (fullnameToShortnameMap.count(fullName)) continue;
     if (shortNamesSeenMoreThanOnce.count(shortName)) {
-      auto matchRes = RegexMatch(fullName, std::regex(R"(<0*([^>]*)>$)"));
+      auto matchRes = RegexMatch(fullName, kAddressPattern2);
       if (!matchRes.empty()) {
         fullnameToShortnameMap.emplace(
             fullName, (boost::format("%s@%s") % shortName % matchRes[1]).str());
