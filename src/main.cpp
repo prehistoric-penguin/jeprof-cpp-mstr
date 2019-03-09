@@ -20,6 +20,7 @@
 
 DEFINE_string(programName, "", "Name of execuable file");
 DEFINE_string(profileName, "", "Name of profile name");
+DEFINE_string(dotFileName, "/tmp/jeprof_cpp.dot", "");
 DEFINE_bool(useSymbolizedProfile, false, "TODO");
 DEFINE_bool(useSymbolPage, false, "TODO");
 DEFINE_bool(functions, true, "TODO");
@@ -1155,8 +1156,7 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
 
   // TODO write into dot
   std::string output = "| dot -Tps2 | ps2pdf - -";
-  std::string dotFile =
-      (boost::format("/tmp/jeprof.dot.%d.dot") % getpid()).str();
+  std::string dotFile = FLAGS_dotFileName;
   std::ofstream ofs(dotFile);
   ofs << boost::format("digraph \"%s; %s %s\" {\n") % prog %
              Unparse(overallTotal) % Units();
@@ -1195,7 +1195,7 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
     node[a] = nextNode++;
     auto sym = a;
 
-    boost::replace_all(sym, " \t", "\\n");
+    boost::replace_all(sym, " ", "\\n");
     boost::replace_all(sym, "::", "\\n");
 
     std::string extra;
@@ -1238,7 +1238,9 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
   // b compare to a
   std::sort(edgeList.begin(), edgeList.end(),
             [](const auto& lhs, const auto& rhs) {
-              return rhs.get().second < lhs.get().second;
+            const auto& lv = lhs.get().second;
+            const auto& rv = rhs.get().second;
+            return lv != rv ? rv < lv : lhs.get() < rhs.get();
             });
 
   std::map<std::string, size_t> outDegree, inDegree;
