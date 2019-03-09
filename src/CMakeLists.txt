@@ -5,6 +5,7 @@ add_executable(
 
 target_link_libraries(
 	jeprof-cpp
+  profiler
 	${GFLAGS_LIBRARIES}
   ${LIBGLOG_LIBRARIES}
   ${Boost_FILESYSTEM_LIBRARY}
