@@ -782,19 +782,11 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
     const auto debugLib = DebuggingLibrary(libName);
     if (!debugLib.empty()) libName = debugLib;
 
-    size_t startPCIndex, finishPCIndex;
-    // TODO lowbound or upperbound
-    for (finishPCIndex = pcs.size(); finishPCIndex > 0; --finishPCIndex) {
-      if (pcs[finishPCIndex - 1] <= entry.finish_) break;
-    }
-    for (startPCIndex = finishPCIndex; startPCIndex > 0; --startPCIndex) {
-      if (pcs[startPCIndex - 1] < entry.start_) break;
-    }
+    auto finishPCIndex = std::upper_bound(pcs.begin(), pcs.end(), entry.finish_);
+    auto startPCIndex = std::lower_bound(pcs.begin(), finishPCIndex, entry.start_);
 
-    std::vector<size_t> contained{std::next(pcs.begin(), startPCIndex),
-                                  std::next(pcs.begin(), finishPCIndex)};
-    pcs.erase(std::next(pcs.begin(), startPCIndex),
-              std::next(pcs.begin(), finishPCIndex));
+    std::vector<size_t> contained{startPCIndex, finishPCIndex};
+    pcs.erase(startPCIndex, finishPCIndex);
 
     LOG(INFO) << "Start to extract symbols for lib:" << libName
               << ", get contained pc set:" << std::hex << contained;
