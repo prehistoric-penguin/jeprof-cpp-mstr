@@ -1,3 +1,4 @@
+#define GLOG_STL_LOGGING_FOR_UNORDERED
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <glog/stl_logging.h>
@@ -7,20 +8,25 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/trim.hpp>
+#include <boost/functional/hash.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/format.hpp>
 #include <boost/regex.hpp>
 #include <cctype>
 #include <csignal>
+#include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <iostream>
+#include <functional>
 #include <map>
 #include <regex>
 #include <string>
 #include <vector>
+#include <chrono>
 
-DEFINE_string(programName, "", "Name of execuable file");
-DEFINE_string(profileName, "", "Name of profile name");
+DEFINE_string(program, "", "Name of execuable file");
+DEFINE_string(profile, "", "Name of profile name");
 DEFINE_string(dotFileName, "/tmp/jeprof_cpp.dot", "");
 DEFINE_bool(useSymbolizedProfile, false, "TODO");
 DEFINE_bool(useSymbolPage, false, "TODO");
@@ -62,8 +68,16 @@ const std::string kSepSymbol = "_fini";
 const std::string kTmpFileSym = "/tmp/jeprof$$.sym";  // FIXME
 const std::string kTmpFilePs = "/tmp/jeprof$$";
 std::string gProfileType;
+
+struct HashVector {
+  size_t operator()(const std::vector<size_t>& vec) const {
+    return boost::hash_value(vec);
+  }
+};
+
 struct Profile {
-  std::map<std::vector<size_t>, size_t> data_;
+  using ProfileMap = std::unordered_map<std::vector<size_t>, size_t, HashVector>;
+   ProfileMap data_;
 };
 
 struct ThreadProfile {
@@ -71,7 +85,7 @@ struct ThreadProfile {
 };
 
 struct PCS {
-  std::map<size_t, int> data_;
+  std::unordered_set<size_t> data_;
 };
 
 struct Symbols {
@@ -99,6 +113,22 @@ struct Context {
   std::vector<LibraryEntry> libs_;
   PCS pcs_;
   Symbols symbols_;
+};
+
+class Marker {
+ public:
+  Marker(const char* f)
+      : time_point_(std::chrono::steady_clock::now()), func_(f) {}
+
+  ~Marker() {
+    auto diff = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - time_point_).count() / 1000.0;
+    std::cout << "time cost in " << func_ << ": " << diff << " ms" << std::endl;
+  }
+
+ private:
+  std::chrono::steady_clock::time_point time_point_;
+  const char* func_;
 };
 
 inline std::ostream& operator<<(std::ostream& out, const Profile& p) {
@@ -182,6 +212,12 @@ std::map<std::string, size_t> ExtractCalls(const Symbols& symbols,
 void FillFullnameToshortnameMap(
     const Symbols& symbols,
     std::map<std::string, std::string>& fullnameToShortnameMap);
+// TODO, combine these two function into one
+size_t TotalProfile(const Profile::ProfileMap& data) {
+  return std::accumulate(
+      data.begin(), data.end(), 0ull,
+      [](size_t sum, const auto& p) { return sum + p.second; });
+}
 template <typename T>
 size_t TotalProfile(const std::map<T, size_t>& profile);
 std::map<std::string, size_t> ExtractCalls(const Symbols& symbols,
@@ -218,8 +254,8 @@ bool IsProfileURL(const std::string& fname) {
 bool IsSymbolizedProfileFile(const std::string& fname) {
   if (!boost::filesystem::exists(fname)) return false;
 
-  LOG(INFO) << "Reading file:" << FLAGS_programName;
-  std::ifstream ifs(FLAGS_programName, std::ios::binary);
+  LOG(INFO) << "Reading file:" << FLAGS_program;
+  std::ifstream ifs(FLAGS_program, std::ios::binary);
   auto firstLine = ReadProfileHeader(ifs);
 
   if (firstLine.empty()) return false;
@@ -263,6 +299,7 @@ std::string FetchDynamicProfile(const std::string& binaryName,
 }
 
 Context ReadProfile(const std::string& program, const std::string& profile) {
+  Marker m(__func__);
   static const std::string contentionMarker = "contention";
   static const std::string growthMarker = "growth";
   static const std::string symbolMarker = "symbol";
@@ -300,6 +337,7 @@ int HeapProfileIndex() { return 1; }
 Context ReadThreadedHeapProfile(const std::string& program,
                                 const std::string& profileName,
                                 const std::string& header, std::ifstream& ifs) {
+  Marker m(__func__);
   LOG(INFO) << "Now read threaded heap profile";
   const int index = HeapProfileIndex();
   int samplingAlgorithm = 0;
@@ -421,9 +459,7 @@ void AddEntries(Profile& profile, PCS& pcs, const std::vector<size_t>& stack,
                 int count) {
   LOG(INFO) << "Add entry for stack:" << std::hex << stack
             << ", with count:" << count;
-  for (auto e : stack) {
-    pcs.data_[e] = 1;
-  }
+  pcs.data_.insert(stack.begin(), stack.end());
   profile.data_[stack] += count;
   // AddEntry(profile, stack, count);
 }
@@ -456,7 +492,10 @@ std::vector<int> AdjustSamples(int sampleAdjustment, int samplingAlgorithm,
   return {n1, s1, n2, s2};
 }
 
+// TODO read files can use folly generator
 std::vector<std::string> ReadMappedLibraries(std::ifstream& ifs) {
+  Marker m(__func__);
+
   std::vector<std::string> result;
   std::string line;
   while (std::getline(ifs, line)) {
@@ -475,10 +514,12 @@ boost::smatch RegexMatch(const std::string& target, const boost::regex& re) {
 
 std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
                                          PCS& pcs) {
+  Marker m(__func__);
+
   if (FLAGS_useSymbolPage) return {};
   // TODO abs path
   std::string buildVar;
-  std::string& programName = FLAGS_programName;
+  std::string& programName = FLAGS_program;
   size_t start, finish, offset;
   std::string lib;
   std::vector<LibraryEntry> result;
@@ -582,7 +623,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
   // Append special entry for additional library (not relocated)
   // FIXME
   size_t minPC = 0, maxPC = 0;
-  maxPC = std::max_element(std::begin(pcs.data_), std::end(pcs.data_))->first;
+  maxPC = *std::max_element(std::begin(pcs.data_), std::end(pcs.data_));
 
   LOG(INFO) << "Add parsed library line, lib:" << programName
             << ",start:" << minPC << ", finish:" << maxPC << ",offset:" << 0;
@@ -598,6 +639,8 @@ std::tuple<size_t, size_t, size_t> ParseTextSectinoHeader(
 }
 
 std::string ExecuteCommand(const std::string& cmd) {
+  auto log = std::string("execute command|" + cmd); 
+  Marker m(log.data());
   std::array<char, 128> buffer;
   std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.data(), "r"), pclose);
   if (!pipe) {
@@ -611,6 +654,8 @@ std::string ExecuteCommand(const std::string& cmd) {
   return result;
 }
 
+// TODO This functino can use stream like method
+// we don't need the whole file, just the header
 std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
     const std::string& lib) {
   auto cmd = ShellEscape("objdump", "-h", lib);
@@ -715,10 +760,12 @@ Symbols MergeSymbols(Symbols& lhs, Symbols& rhs) {
   return result;
 }
 
+// TODO: smallvector smallstring replace
 Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
                        const PCS& pcSet) {
-  Symbols symbols;
+  Marker m(__func__);
 
+  Symbols symbols;
   auto sortedLibs = libs;
   // consider use reference_wrapper
   std::sort(
@@ -728,7 +775,8 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
   std::vector<size_t> pcs;
   std::transform(pcSet.data_.begin(), pcSet.data_.end(),
                  std::back_inserter(pcs),
-                 [](const auto& p) { return p.first; });
+                 [](const auto& p) { return p; });
+  std::sort(pcs.begin(), pcs.end());
   for (const auto& entry : sortedLibs) {
     auto libName = entry.lib_;
     const auto debugLib = DebuggingLibrary(libName);
@@ -759,6 +807,8 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
 
 void MapToSymbols(const std::string& image, size_t offset,
                   const std::vector<size_t>& pcList, Symbols& symbols) {
+  Marker m(__func__);
+
   if (pcList.empty()) return;
 
   std::string cmd = ShellEscape(kAddr2Line, "-f", "-C", "-e", image);
@@ -855,6 +905,8 @@ void MapToSymbols(const std::string& image, size_t offset,
 bool MapSymbolsWithNM(const std::string& image, size_t offset,
                       const std::vector<size_t>& pcList, Symbols& symbols,
                       size_t* sepAddress) {
+  Marker m(__func__);
+
   LOG(INFO) << "Start map symbols for image:" << image
             << ", with offset:" << std::hex << offset;
   auto symbolTable = GetProcedureBoundaries(image, ".", sepAddress);
@@ -918,12 +970,14 @@ std::string ShortFunctionName(const std::string& fullName) {
     name = r;
   }
 
-  return boost::regex_replace(name, boost::regex(R"(^.*\s+(\w+::))"), "$&");
+  return replace(name, R"(^.*\s+(\w+::))", "$&");
 }
 
 SymbolTable GetProcedureBoundaries(const std::string& image,
                                    const std::string& regex,
                                    size_t* sepAddress) {
+  Marker m(__func__);
+
   if (image.find_first_of("/.") != 0) {
     LOG(ERROR) << "Error file name, not start with . or /:" << image;
     return {};
@@ -972,6 +1026,8 @@ SymbolTable GetProcedureBoundaries(const std::string& image,
 SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
                                         const std::string& regex,
                                         size_t* sepAddress) {
+  Marker m(__func__);
+
   SymbolTable table;
   auto cmdResult = ExecuteCommand(cmd);
   std::string routine;
@@ -1054,6 +1110,8 @@ const std::string kSkipFunctions[] = {
     "__stop_malloc_hook"};
 
 void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
+  Marker m(__func__);
+
   const std::string skipRegexPattern = "NOMATCH";
 
   // TODO seems can be replaced with set
@@ -1068,7 +1126,7 @@ void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
   if (gProfileType == "cup") {
     // skiped logic
   }
-  std::map<std::vector<size_t>, size_t> result;
+  Profile::ProfileMap result;
   for (const auto& p : profile.data_) {
     size_t count = p.second;
     std::vector<size_t> path;
@@ -1102,6 +1160,8 @@ void FilterFrames(const Symbols& symbols, Profile& profile) {
 void FilterAndPrint(Profile profile, const Symbols& symbols,
                     const std::vector<LibraryEntry>& libs,
                     const std::vector<std::string>& threads) {
+  Marker m(__func__);
+
   auto total = TotalProfile(profile.data_);
   LOG(INFO) << "Total Profile:" << std::hex << total;
   RemoveUninterestingFrames(symbols, profile);
@@ -1115,13 +1175,15 @@ void FilterAndPrint(Profile profile, const Symbols& symbols,
   auto cumulative = CumulativeProfile(reduced);
   LOG(INFO) << "The cumulative profile:" << std::hex << cumulative;
 
-  PrintDot(FLAGS_programName, symbols, profile, flat, cumulative, total);
+  PrintDot(FLAGS_program, symbols, profile, flat, cumulative, total);
 }
 
 bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
               const std::map<std::string, size_t>& flatMap,
               const std::map<std::string, size_t>& cumulativeMap,
               size_t overallTotal) {
+  Marker m(__func__);
+
   auto flat = flatMap;
   auto cumulative = cumulativeMap;
   auto localTotal = TotalProfile(flat);
@@ -1304,12 +1366,16 @@ std::string Units() {
 std::map<std::string, size_t> FlatProfile(
     const std::map<std::vector<std::string>, size_t>& profile) {
   std::map<std::string, size_t> result;
+  Marker m(__func__);
+
   for (const auto& p : profile) result[p.first.front()] += p.second;
   return result;
 }
 
 std::map<std::string, size_t> CumulativeProfile(
     const std::map<std::vector<std::string>, size_t>& profile) {
+  Marker m(__func__);
+
   std::map<std::string, size_t> result;
   for (const auto& p : profile) {
     for (const auto& a : p.first) {
@@ -1321,6 +1387,8 @@ std::map<std::string, size_t> CumulativeProfile(
 
 std::map<std::vector<std::string>, size_t> ReduceProfile(
     const Symbols& symbols, const Profile& profile) {
+  Marker m(__func__);
+
   std::map<std::vector<std::string>, size_t> result;
   std::map<std::string, std::string> fullnameToShortnameMap;
   FillFullnameToshortnameMap(symbols, fullnameToShortnameMap);
@@ -1347,6 +1415,7 @@ std::vector<std::string> TranslateStack(
     const Symbols& symbols,
     const std::map<std::string, std::string>& fullnameToShortnameMap,
     const std::vector<size_t>& addrs) {
+
   std::vector<std::string> result;
   for (size_t i = 0, sz = addrs.size(); i < sz; ++i) {
     size_t a = addrs[i];
@@ -1446,6 +1515,8 @@ std::string ExtractSymbolLocation(const Symbols& symbols, size_t addr) {
 
 std::map<std::string, size_t> ExtractCalls(const Symbols& symbols,
                                            const Profile& profile) {
+  Marker m(__func__);
+
   std::map<std::string, size_t> calls;
   for (const auto& p : profile.data_) {
     size_t count = p.second;
@@ -1480,12 +1551,12 @@ int main(int argc, char* argv[]) {
   google::InitGoogleLogging(argv[0]);
   google::InstallFailureSignalHandler();
 
-  if (FLAGS_programName.empty() || FLAGS_profileName.empty()) {
+  if (FLAGS_program.empty() || FLAGS_profile.empty()) {
     std::cerr << "Wrong input" << std::endl;
     return 0;
   }
   Init();
-  auto data = ReadProfile(FLAGS_programName, FLAGS_profileName);
+  auto data = ReadProfile(FLAGS_program, FLAGS_profile);
   Symbols symbolMap;
   symbolMap = MergeSymbols(symbolMap, data.symbols_);
   // std::map<> sourceCache;
