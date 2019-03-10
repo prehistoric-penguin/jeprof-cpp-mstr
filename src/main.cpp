@@ -184,7 +184,7 @@ std::string DebuggingLibrary(const std::string&);
 
 std::tuple<size_t, size_t, size_t> ParseTextSectinoHeader(const std::string&);
 void ParseTextSectionHeaderFromObjdump(const std::string&);
-std::string ExecuteCommand(const std::string&);
+std::vector<std::string> ExecuteCommand(const std::string&);
 bool System(const std::string&);
 
 std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
@@ -649,7 +649,7 @@ std::tuple<size_t, size_t, size_t> ParseTextSectinoHeader(
   return ParseTextSectinoHeaderFromObjdump(lib);
 }
 
-std::string ExecuteCommand(const std::string& cmd) {
+std::vector<std::string> ExecuteCommand(const std::string& cmd) {
   auto log = std::string("execute command|" + cmd); 
   Marker m(log.data());
   std::array<char, 128> buffer;
@@ -662,7 +662,11 @@ std::string ExecuteCommand(const std::string& cmd) {
     result += buffer.data();
   }
   LOG(INFO) << "Execute command:" << cmd << ",Get result:\n" << result;
-  return result;
+  boost::algorithm::erase_all(result, "\r");
+  std::vector<std::string> resultSet;
+  boost::split(resultSet, result, [](char c) { return c == '\n'; });
+
+  return resultSet;
 }
 
 // TODO This functino can use stream like method
@@ -670,10 +674,7 @@ std::string ExecuteCommand(const std::string& cmd) {
 std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
     const std::string& lib) {
   auto cmd = ShellEscape("objdump", "-h", lib);
-  auto result = boost::algorithm::erase_all_copy(ExecuteCommand(cmd), "\r");
-
-  std::vector<std::string> resultSet;
-  boost::split(resultSet, result, [](char c) { return c == '\n'; });
+  auto resultSet = ExecuteCommand(cmd);
 
   size_t size = 0;
   size_t vma = 0;
@@ -833,28 +834,22 @@ void MapToSymbols(const std::string& image, size_t offset,
       sepAddress = std::numeric_limits<size_t>::max();
     }
   }
-  const std::string tmpFileSym =
-      (boost::format("/tmp/jeprof_cpp%d.sym") % getpid()).str();
-  LOG(INFO) << "Write data into tmp sys file:" << tmpFileSym
-            << ", with content:" << std::endl
-            << std::hex << pcList;
-  std::ofstream ofs(tmpFileSym);
-  LOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
+  std::vector<std::string> addrs;
   auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
   for (auto pc : pcList) {
-    ofs << toHexStr(AddressSub(pc, offset)) << std::endl;
-    if (IsValidSepAddress(sepAddress)) ofs << toHexStr(sepAddress) << std::endl;
+    addrs.emplace_back(toHexStr(AddressSub(pc, offset)));
+
+    if (IsValidSepAddress(sepAddress)) {
+      addrs.emplace_back(toHexStr(sepAddress));
+    }
   }
-  ofs.close();
 
   // TODO review the original source the command end with |
-  const std::string cmdWithTmpFile =
-      (boost::format("%s <%s") % cmd % tmpFileSym).str();
-  auto result = ExecuteCommand(cmdWithTmpFile);
-  std::vector<std::string> resultSet;
-  boost::split(resultSet, result, [](char c) { return c == '\n'; });
-
+  const std::string cmdWithAddresses =
+      (boost::format("%s %s") % cmd % boost::join(addrs, " ")).str();
+  auto resultSet = ExecuteCommand(cmdWithAddresses);
   LOG(INFO) << "Total lines for command result:" << resultSet.size();
+
   size_t count = 0;
   for (size_t i = 0, resultSize = resultSet.size(); i < resultSize;) {
     auto line = resultSet[i++];
@@ -1031,8 +1026,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
   Marker m(__func__);
 
   SymbolTable table;
-  auto cmdResult = ExecuteCommand(cmd);
-  std::string routine;
+  auto resultSet = ExecuteCommand(cmd);
 
   auto CheckAddSymbol = [&table, &regex](const std::string& name,
                                          const auto& start, const auto& last) {
@@ -1047,11 +1041,9 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
       table.data_.emplace(name, std::vector<size_t>{startVal, lastVal});
     }
   };
-  std::vector<std::string> resultSet;
-  boost::split(resultSet, cmdResult, [](char c) { return c == '\n'; });
   std::string lastStart = "0";
+  std::string routine;
   for (auto line : resultSet) {
-    boost::erase_all(line, "\r");
     static const boost::regex kSymbolPattern(R"(^\s*([0-9a-f]+) (.) (..*))");
     auto matchRes = RegexMatch(line, kSymbolPattern);
     if (!matchRes.empty()) {
