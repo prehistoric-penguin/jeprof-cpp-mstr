@@ -25,6 +25,7 @@
 #include <vector>
 #include <chrono>
 
+#include "thread_pool.h"
 DEFINE_string(program, "", "Name of execuable file");
 DEFINE_string(profile, "", "Name of profile name");
 DEFINE_string(dotFileName, "/tmp/jeprof_cpp.dot", "");
@@ -123,7 +124,7 @@ class Marker {
   ~Marker() {
     auto diff = std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - time_point_).count() / 1000.0;
-    std::cout << "time cost in " << func_ << ": " << diff << " ms" << std::endl;
+    std::cerr << "time cost in " << func_ << ": " << diff << " ms" << std::endl;
   }
 
  private:
@@ -190,7 +191,7 @@ bool System(const std::string&);
 std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
     const std::string&);
 size_t AddressAdd(size_t, size_t);
-Symbols MergeSymbols(Symbols&, Symbols&);
+void MergeSymbols(Symbols&, const Symbols&);
 Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs, const PCS& pcSet);
 void MapToSymbols(const std::string&, size_t, const std::vector<size_t>&,
                   Symbols&);
@@ -232,18 +233,20 @@ std::vector<std::string> TranslateStack(
     const std::map<std::string, std::string>& fullnameToShortnameMap,
     const std::vector<size_t>& addrs);
 std::map<std::vector<std::string>, size_t> ReduceProfile(
-    const Symbols& symbols, const Profile& profile);
+    const Symbols& symbols, const Profile& profile,
+    const std::map<std::string, std::string>&);
 std::map<std::string, size_t> CumulativeProfile(
     const std::map<std::vector<std::string>, size_t>& profile);
 std::map<std::string, size_t> FlatProfile(
     const std::map<std::vector<std::string>, size_t>& profile);
 std::string Units();
-double Unparse(size_t num);
+std::string Unparse(size_t num);
 std::string Percent(double num, double tot);
 bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
               const std::map<std::string, size_t>& flat,
               const std::map<std::string, size_t>& cumulative,
-              size_t overallTotal);
+              size_t overallTotal,
+              const std::map<std::string, std::string>&);
 struct Addr2lineChecker {
   Addr2lineChecker() {
     enable = System(ShellEscape(kAddr2Line, "--help",
@@ -705,11 +708,11 @@ std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
 
 std::string DebuggingLibrary(const std::string& file) {
   // Carefull for multhread
-  static std::map<std::string, std::string> cache;
-  auto it = cache.find(file);
-  if (it != cache.end()) {
-    return it->second;
-  }
+  //static std::map<std::string, std::string> cache;
+  //auto it = cache.find(file);
+  //if (it != cache.end()) {
+  //  return it->second;
+  //}
 
   if (boost::starts_with(file, "/")) {
     std::array<std::string, 2> debugFiles = {
@@ -718,13 +721,13 @@ std::string DebuggingLibrary(const std::string& file) {
     for (const auto& f : debugFiles) {
       if (boost::filesystem::exists(f)) {
         LOG(INFO) << "Find debugging lib:" << f << ", for file:" << file;
-        cache.emplace(file, f);
+        //cache.emplace(file, f);
         return f;
       }
     }
   }
   LOG(INFO) << "Haven't find debugging lib for file:" << file;
-  cache.emplace(file, std::string{});
+  //cache.emplace(file, std::string{});
   return {};
 }
 
@@ -765,11 +768,15 @@ std::vector<std::string> ReadMemoryMap(std::ifstream& ifs) {
 
 size_t AddressAdd(size_t x, size_t y) { return x + y; }
 
-Symbols MergeSymbols(Symbols& lhs, Symbols& rhs) {
-  Symbols result = lhs;
-  result.data_.insert(std::begin(rhs.data_), std::end(rhs.data_));
+void MergeSymbols(Symbols& lhs, const Symbols& rhs) {
+  lhs.data_.insert(std::begin(rhs.data_), std::end(rhs.data_));
+}
 
-  return result;
+Symbols MapToSymbols2(std::string image, size_t offset,
+                  std::vector<size_t> pcList) {
+  Symbols res;
+  MapToSymbols(image, offset, pcList, res);
+  return res;
 }
 
 // TODO: smallvector smallstring replace
@@ -789,6 +796,9 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
                  std::back_inserter(pcs),
                  [](const auto& p) { return p; });
   std::sort(pcs.begin(), pcs.end());
+  std::vector<std::future<Symbols>> symbolsFutures;
+  detail::thread_pool pool;
+
   for (const auto& entry : sortedLibs) {
     auto libName = entry.lib_;
     const auto debugLib = DebuggingLibrary(libName);
@@ -802,8 +812,18 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
 
     LOG(INFO) << "Start to extract symbols for lib:" << libName
               << ", get contained pc set:" << std::hex << contained;
+    auto addr = AddressSub(entry.start_, entry.offset_);
+    auto future = pool.submit([libName, addr, contained]() {
+        return MapToSymbols2(libName, addr, contained);
+    });
+    symbolsFutures.emplace_back(std::move(future));
+    /*
     MapToSymbols(libName, AddressSub(entry.start_, entry.offset_), contained,
                  symbols);
+                 */
+  }
+  for (auto& f: symbolsFutures) {
+     MergeSymbols(symbols, f.get());
   }
 
   return symbols;
@@ -834,8 +854,8 @@ void MapToSymbols(const std::string& image, size_t offset,
       sepAddress = std::numeric_limits<size_t>::max();
     }
   }
+/*
   std::vector<std::string> addrs;
-  auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
   for (auto pc : pcList) {
     addrs.emplace_back(toHexStr(AddressSub(pc, offset)));
 
@@ -843,10 +863,25 @@ void MapToSymbols(const std::string& image, size_t offset,
       addrs.emplace_back(toHexStr(sepAddress));
     }
   }
+*/
+  
+  const std::string tmpFileSym =
+      (boost::format("/tmp/jeprof_cpp%d_%d.sym") % getpid() % std::this_thread::get_id()).str();
+  LOG(INFO) << "Write data into tmp sys file:" << tmpFileSym
+            << ", with content:" << std::endl
+            << std::hex << pcList;
+  std::ofstream ofs(tmpFileSym);
+	auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
+   for (auto pc : pcList) {
+    ofs << toHexStr(AddressSub(pc, offset)) << std::endl;
+    if (IsValidSepAddress(sepAddress)) ofs << toHexStr(sepAddress) << std::endl;
+	}
+	ofs.close();
+  LOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
 
   // TODO review the original source the command end with |
   const std::string cmdWithAddresses =
-      (boost::format("%s %s") % cmd % boost::join(addrs, " ")).str();
+			(boost::format("%s <%s") % cmd % tmpFileSym).str();
   auto resultSet = ExecuteCommand(cmdWithAddresses);
   LOG(INFO) << "Total lines for command result:" << resultSet.size();
 
@@ -988,7 +1023,8 @@ SymbolTable GetProcedureBoundaries(const std::string& image,
   std::string toDevNull = ">/dev/null 2>&1";
 
   // This line seems a bug in the perl source code, image -> $image
-  if (System(ShellEscape(kNm, "--demangle", "image") + toDevNull)) {
+  // TODO don't test these function, move the different flag into nmCommands
+  if (System(ShellEscape(kNm, "--demangle", image) + toDevNull)) {
     demangleFlag = "--demangle";
     cppfiltFlag = "";
   } else if (System(ShellEscape(kCppFilt, image) + toDevNull)) {
@@ -1004,11 +1040,9 @@ SymbolTable GetProcedureBoundaries(const std::string& image,
       (boost::format(" 2>/dev/null %s") % cppfiltFlag).str();
   // TODO the 6nm binary command is omitted here
   std::vector<std::string> nmCommands = {
-      std::string(ShellEscape(kNm, "-n", flattenFlag, demangleFlag, image) +
-                  tail),
-      std::string(
-          ShellEscape(kNm, "-D", "-n", flattenFlag, demangleFlag, image) +
-          tail)};
+      ShellEscape(kNm, "-n", flattenFlag, demangleFlag, image) + tail,
+      ShellEscape(kNm, "-D", "-n", flattenFlag, demangleFlag, image) + tail
+  };
 
   if (false) {  // nm_pdb related for windows
   }
@@ -1043,7 +1077,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
   };
   std::string lastStart = "0";
   std::string routine;
-  for (auto line : resultSet) {
+  for (const auto& line : resultSet) {
     static const boost::regex kSymbolPattern(R"(^\s*([0-9a-f]+) (.) (..*))");
     auto matchRes = RegexMatch(line, kSymbolPattern);
     if (!matchRes.empty()) {
@@ -1081,7 +1115,12 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
   return table;
 }
 
-bool System(const std::string& cmd) { return system(cmd.data()) == 0; }
+bool System(const std::string& cmd) { 
+  auto log = std::string(__func__ + std::string("|execute command:") + cmd); 
+  Marker m(log.data());
+
+  return system(cmd.data()) == 0; 
+}
 
 const std::string kSkipFunctions[] = {
     "calloc", "cfree", "malloc", "newImpl", "void* newImpl", "free", "memalign",
@@ -1109,7 +1148,7 @@ void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
   const std::string skipRegexPattern = "NOMATCH";
 
   // TODO seems can be replaced with set
-  std::set<std::string> skip;
+  std::unordered_set<std::string> skip;
   if (gProfileType == "heap" || gProfileType == "growth") {
     for (const auto& f : kSkipFunctions) {
       skip.insert(f);
@@ -1155,27 +1194,32 @@ void FilterAndPrint(Profile profile, const Symbols& symbols,
                     const std::vector<LibraryEntry>& libs,
                     const std::vector<std::string>& threads) {
   Marker m(__func__);
+  std::map<std::string, std::string> fullnameToShortnameMap;
+  FillFullnameToshortnameMap(symbols, fullnameToShortnameMap);
+  LOG(INFO) << "Get fullname to shortname map:" << fullnameToShortnameMap;
 
   auto total = TotalProfile(profile.data_);
   LOG(INFO) << "Total Profile:" << std::hex << total;
   RemoveUninterestingFrames(symbols, profile);
   LOG(INFO) << "After remove unteresting frames:" << std::hex << profile.data_;
-  auto calls = ExtractCalls(symbols, profile);
-  LOG(INFO) << "Extracted calls:" << std::hex << calls;
-  auto reduced = ReduceProfile(symbols, profile);
+  //auto calls = ExtractCalls(symbols, profile);
+  //LOG(INFO) << "Extracted calls:" << std::hex << calls;
+  auto reduced = ReduceProfile(symbols, profile, fullnameToShortnameMap);
   LOG(INFO) << "The reduced profile:" << std::hex << reduced;
   auto flat = FlatProfile(reduced);
   LOG(INFO) << "The flat profile:" << std::hex << flat;
   auto cumulative = CumulativeProfile(reduced);
   LOG(INFO) << "The cumulative profile:" << std::hex << cumulative;
 
-  PrintDot(FLAGS_program, symbols, profile, flat, cumulative, total);
+  PrintDot(FLAGS_program, symbols, profile, flat, cumulative, total,
+      fullnameToShortnameMap);
 }
 
 bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
               const std::map<std::string, size_t>& flatMap,
               const std::map<std::string, size_t>& cumulativeMap,
-              size_t overallTotal) {
+              size_t overallTotal,
+              const std::map<std::string, std::string>& fullnameToShortnameMap) {
   Marker m(__func__);
 
   auto flat = flatMap;
@@ -1269,13 +1313,10 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
   using Edge = std::map<std::array<std::string, 2>, size_t>;
   Edge edge;
   size_t n = 0;
-  std::map<std::string, std::string> fullnameToshortnameMap;
   // TODO, this function is called twice
-  FillFullnameToshortnameMap(symbols, fullnameToshortnameMap);
-
   for (const auto& r : raw.data_) {
     n = r.second;
-    auto translated = TranslateStack(symbols, fullnameToshortnameMap, r.first);
+    auto translated = TranslateStack(symbols,fullnameToShortnameMap, r.first);
     for (int i = 1, sz = static_cast<int>(translated.size()); i < sz; ++i) {
       auto& src = translated[i];
       auto& dst = translated[i - 1];
@@ -1343,11 +1384,11 @@ std::string Percent(double num, double tot) {
   return num == 0 ? "nan" : ((num > 0) ? "+inf" : "-inf");
 }
 
-double Unparse(size_t num) {
+std::string Unparse(size_t num) {
   if (FLAGS_showBytes) {
-    return num;
+    return std::to_string(num);
   }
-  return 1.0 * num / (1024 * 1024);
+  return std::to_string(1.0 * num / (1024 * 1024));
 }
 
 std::string Units() {
@@ -1380,14 +1421,11 @@ std::map<std::string, size_t> CumulativeProfile(
 }
 
 std::map<std::vector<std::string>, size_t> ReduceProfile(
-    const Symbols& symbols, const Profile& profile) {
+    const Symbols& symbols, const Profile& profile,
+    const std::map<std::string, std::string>& fullnameToShortnameMap) {
   Marker m(__func__);
 
   std::map<std::vector<std::string>, size_t> result;
-  std::map<std::string, std::string> fullnameToShortnameMap;
-  FillFullnameToshortnameMap(symbols, fullnameToShortnameMap);
-
-  LOG(INFO) << "Get fullname to shortname map:" << fullnameToShortnameMap;
   for (const auto& p : profile.data_) {
     auto count = p.second;
     auto translated = TranslateStack(symbols, fullnameToShortnameMap, p.first);
@@ -1552,7 +1590,7 @@ int main(int argc, char* argv[]) {
   Init();
   auto data = ReadProfile(FLAGS_program, FLAGS_profile);
   Symbols symbolMap;
-  symbolMap = MergeSymbols(symbolMap, data.symbols_);
+  MergeSymbols(symbolMap, data.symbols_);
   // std::map<> sourceCache;
   // std::string profileName = "a.out";
   // std::string fileName = "a.out";
