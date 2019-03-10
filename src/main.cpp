@@ -131,6 +131,7 @@ class Marker {
   const char* func_;
 };
 
+
 inline std::ostream& operator<<(std::ostream& out, const Profile& p) {
   out << '[' << p.data_ << ']';
   return out;
@@ -243,6 +244,16 @@ bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
               const std::map<std::string, size_t>& flat,
               const std::map<std::string, size_t>& cumulative,
               size_t overallTotal);
+struct Addr2lineChecker {
+  Addr2lineChecker() {
+    enable = System(ShellEscape(kAddr2Line, "--help",
+          ">/dev/null 2>&1"));
+  }
+  bool exists() { return enable;}
+  bool enable = false;
+};
+
+Addr2lineChecker gAddr2lineChecker;
 
 bool IsProfileURL(const std::string& fname) {
   bool exists = boost::filesystem::exists(fname);
@@ -803,8 +814,7 @@ void MapToSymbols(const std::string& image, size_t offset,
 
   if (pcList.empty()) return;
 
-  std::string cmd = ShellEscape(kAddr2Line, "-f", "-C", "-e", image);
-  if (!System(ShellEscape(kAddr2Line, "--help", ">/dev/null 2>&1"))) {
+  if (!gAddr2lineChecker.exists()) {
     LOG(INFO) << "addr2line is not installed on system, use nm";
     MapSymbolsWithNM(image, offset, pcList, symbols);
     return;
@@ -813,6 +823,7 @@ void MapToSymbols(const std::string& image, size_t offset,
   Symbols nmSymbols;
   size_t sepAddress = std::numeric_limits<size_t>::max();
   MapSymbolsWithNM(image, offset, pcList, nmSymbols, &sepAddress);
+  std::string cmd = ShellEscape(kAddr2Line, "-f", "-C", "-e", image);
   if (IsValidSepAddress(sepAddress)) {
     auto fullCmd = (boost::format("%s -i --help >/dev/null 2>&1") % cmd).str();
     if (System(fullCmd)) {
@@ -827,7 +838,6 @@ void MapToSymbols(const std::string& image, size_t offset,
   LOG(INFO) << "Write data into tmp sys file:" << tmpFileSym
             << ", with content:" << std::endl
             << std::hex << pcList;
-
   std::ofstream ofs(tmpFileSym);
   LOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
   auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
