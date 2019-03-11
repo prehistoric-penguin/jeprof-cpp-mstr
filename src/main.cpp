@@ -70,6 +70,7 @@ const std::string kTmpFileSym = "/tmp/jeprof$$.sym";  // FIXME
 const std::string kTmpFilePs = "/tmp/jeprof$$";
 std::string gProfileType;
 
+detail::thread_pool gThreadPool;
 struct HashVector {
   size_t operator()(const std::vector<size_t>& vec) const {
     return boost::hash_value(vec);
@@ -780,6 +781,8 @@ Symbols MapToSymbols2(std::string image, size_t offset,
 }
 
 // TODO: smallvector smallstring replace
+// TODO: think about estimate pruning (don't need all symbols,
+// only care about the hot point)
 Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
                        const PCS& pcSet) {
   Marker m(__func__);
@@ -796,8 +799,6 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
                  std::back_inserter(pcs), [](const auto& p) { return p; });
   std::sort(pcs.begin(), pcs.end());
   std::vector<std::future<Symbols>> symbolsFutures;
-  detail::thread_pool pool;
-
   for (const auto& entry : sortedLibs) {
     auto libName = entry.lib_;
     const auto debugLib = DebuggingLibrary(libName);
@@ -814,7 +815,7 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
     LOG(INFO) << "Start to extract symbols for lib:" << libName
               << ", get contained pc set:" << std::hex << contained;
     auto addr = AddressSub(entry.start_, entry.offset_);
-    auto future = pool.submit([libName, addr, contained]() {
+    auto future = gThreadPool.submit([libName, addr, contained]() {
       return MapToSymbols2(libName, addr, contained);
     });
     symbolsFutures.emplace_back(std::move(future));
