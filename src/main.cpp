@@ -261,7 +261,7 @@ Addr2lineChecker gAddr2lineChecker;
 
 bool IsProfileURL(const std::string& fname) {
   bool exists = boost::filesystem::exists(fname);
-  LOG(INFO) << "File:" << fname << " exists:" << exists;
+  DLOG(INFO) << "File:" << fname << " exists:" << exists;
 
   return exists;
 }
@@ -269,7 +269,7 @@ bool IsProfileURL(const std::string& fname) {
 bool IsSymbolizedProfileFile(const std::string& fname) {
   if (!boost::filesystem::exists(fname)) return false;
 
-  LOG(INFO) << "Reading file:" << FLAGS_program;
+  DLOG(INFO) << "Reading file:" << FLAGS_program;
   std::ifstream ifs(FLAGS_program, std::ios::binary);
   auto firstLine = ReadProfileHeader(ifs);
 
@@ -291,15 +291,15 @@ std::string ReadProfileHeader(std::ifstream& ifs) {
   while (std::getline(ifs, line)) {
     boost::erase_all(line, "\r");
     if (boost::starts_with(line, "%warn")) {
-      LOG(INFO) << "WARNING:" << line;
+      DLOG(INFO) << "WARNING:" << line;
     } else if (boost::starts_with(line, "%")) {
-      LOG(INFO) << "Ignoring unknown command from profile header:" << line;
+      DLOG(INFO) << "Ignoring unknown command from profile header:" << line;
     } else {
-      LOG(INFO) << "Get header line:" << line;
+      DLOG(INFO) << "Get header line:" << line;
       return line;
     }
   }
-  LOG(FATAL) << "No header lines is found";
+  DLOG(FATAL) << "No header lines is found";
   return line;
 }
 
@@ -321,18 +321,18 @@ Context ReadProfile(const std::string& program, const std::string& profile) {
   static const std::string profileMarker = "profile";
   static const std::string heapMarker = "heap";
 
-  LOG(INFO) << "Read program:" << program << ", profile:" << profile;
+  DLOG(INFO) << "Read program:" << program << ", profile:" << profile;
   std::ifstream ifs(profile, std::ios::binary);
   std::string header = ReadProfileHeader(ifs);
   if (boost::starts_with(header,
                          (boost::format("--- %s") % symbolMarker).str())) {
-    LOG(INFO) << "Meet symbol marker:" << header;
+    DLOG(INFO) << "Meet symbol marker:" << header;
   }
   if (boost::starts_with(header,
                          (boost::format("--- %s") % heapMarker).str()) ||
       boost::starts_with(header,
                          (boost::format("--- %s") % growthMarker).str())) {
-    LOG(INFO) << "Meet heap marker or growther marker:" << header;
+    DLOG(INFO) << "Meet heap marker or growther marker:" << header;
   }
 
   // std::string profileType = "";
@@ -353,7 +353,7 @@ Context ReadThreadedHeapProfile(const std::string& program,
                                 const std::string& profileName,
                                 const std::string& header, std::ifstream& ifs) {
   Marker m(__func__);
-  LOG(INFO) << "Now read threaded heap profile";
+  DLOG(INFO) << "Now read threaded heap profile";
   const int index = HeapProfileIndex();
   int samplingAlgorithm = 0;
   int sampleAdjustment = 0;
@@ -368,11 +368,11 @@ Context ReadThreadedHeapProfile(const std::string& program,
     samplingAlgorithm = 2;
     sampleAdjustment = std::stoi(matchRes[1]);
   }
-  LOG(INFO) << "samplingAlgorithm:" << samplingAlgorithm
+  DLOG(INFO) << "samplingAlgorithm:" << samplingAlgorithm
             << ", sampleAdjustment:" << sampleAdjustment;
 
   if (type != "_v2") {
-    LOG(FATAL)
+    DLOG(FATAL)
         << "Threaded map profiles require v2 sampling with a sample rate";
   }
 
@@ -381,13 +381,14 @@ Context ReadThreadedHeapProfile(const std::string& program,
   PCS pcs;
   std::vector<std::string> map;
   std::string stack;
+  std::vector<size_t> fixedCallerStack;
 
   std::string line;
   // TODO can be parallel here
   while (std::getline(ifs, line)) {
     boost::erase_all(line, "\r");
     if (boost::starts_with(line, "MAPPED_LIBRARIES:")) {
-      LOG(INFO) << "Read mapped libraries:" << line;
+      DLOG(INFO) << "Read mapped libraries:" << line;
       map = ReadMappedLibraries(ifs);
       break;
     }
@@ -402,6 +403,7 @@ Context ReadThreadedHeapProfile(const std::string& program,
     auto matchRes1 = RegexMatch(line, kPattern1);
     if (!matchRes1.empty()) {
       stack = matchRes1[1];
+      fixedCallerStack = FixCallerAddresses(stack);
       continue;
     }
     static const boost::regex kPattern2(
@@ -422,17 +424,17 @@ Context ReadThreadedHeapProfile(const std::string& program,
       std::vector<int> counts =
           AdjustSamples(sampleAdjustment, samplingAlgorithm, n1, s1, n2, s2);
       if (thread == "*") {
-        AddEntries(profile, pcs, FixCallerAddresses(stack), counts[index]);
+        AddEntries(profile, pcs, fixedCallerStack, counts[index]);
 
       } else {
-        AddEntries(threadProfiles.data_[thread], pcs, FixCallerAddresses(stack),
+        AddEntries(threadProfiles.data_[thread], pcs, fixedCallerStack,
                    counts[index]);
       }
     }
   }
   Context context = {std::string("heap"),      1,   profile,  threadProfiles,
                      ParseLibraries(map, pcs), pcs, Symbols{}};
-  LOG(INFO) << "Parsed profile:\n"
+  DLOG(INFO) << "Parsed profile:\n"
             << std::hex << profile.data_ << std::endl
             << "Parsed threadprofile:\n"
             << std::hex << threadProfiles.data_ << std::endl
@@ -457,14 +459,14 @@ std::vector<size_t> FixCallerAddresses(const std::string& stack) {
     *it = AddressSub(*it, 0x1);
   }
 
-  LOG(INFO) << "Caller address from:" << stack << ", to:" << std::hex
+  DLOG(INFO) << "Caller address from:" << stack << ", to:" << std::hex
             << numAddrs;
   return numAddrs;
 }
 
 size_t AddressSub(size_t x, size_t y) {
   if (x < y) {
-    LOG(ERROR) << "Can not sub:" << x << " - " << y;
+    DLOG(ERROR) << "Can not sub:" << x << " - " << y;
     return x;
   }
   return x - y;
@@ -472,7 +474,7 @@ size_t AddressSub(size_t x, size_t y) {
 
 void AddEntries(Profile& profile, PCS& pcs, const std::vector<size_t>& stack,
                 int count) {
-  LOG(INFO) << "Add entry for stack:" << std::hex << stack
+  DLOG(INFO) << "Add entry for stack:" << std::hex << stack
             << ", with count:" << count;
   pcs.data_.insert(stack.begin(), stack.end());
   profile.data_[stack] += count;
@@ -517,7 +519,7 @@ std::vector<std::string> ReadMappedLibraries(std::ifstream& ifs) {
     boost::erase_all(line, "\r");
     result.emplace_back(std::move(line));
   }
-  LOG(INFO) << "Get mapped libraries section:" << result;
+  DLOG(INFO) << "Get mapped libraries section:" << result;
   return result;
 }
 
@@ -543,7 +545,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
     auto buildMatchRes = RegexMatch(line, kBuildNumberPattern);
     if (!buildMatchRes.empty()) {
       buildVar = buildMatchRes[1];
-      LOG(INFO) << "Build variable:" << buildVar;
+      DLOG(INFO) << "Build variable:" << buildVar;
     }
 
     bool match = false;
@@ -559,7 +561,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
         offset = std::stoull(matchResult1[3], nullptr, 16);
         lib = matchResult1[4];  // window style path
 
-        LOG(INFO) << "matched case 1:" << line;
+        DLOG(INFO) << "matched case 1:" << line;
         match = true;
         break;
       }
@@ -575,7 +577,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
         offset = 0;
         lib = matchResult2[3];
 
-        LOG(INFO) << "matched case 2:" << line;
+        DLOG(INFO) << "matched case 2:" << line;
         match = true;
         break;
       }
@@ -593,7 +595,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
         offset = std::stoull(matchResult3[3], nullptr, 16);
         lib = matchResult3[4];
 
-        LOG(INFO) << "matched case 3:" << line;
+        DLOG(INFO) << "matched case 3:" << line;
         match = true;
         break;
       }
@@ -609,14 +611,14 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
         finish = std::stoull(matchResult4[2], nullptr, 16);
         offset = 0;
         // lib = FindLibrary(matchResult[5]);
-        LOG(INFO) << "matched case 4:" << line;
+        DLOG(INFO) << "matched case 4:" << line;
         match = true;
         break;
       }
     } while (0);
 
     if (!match) {
-      LOG(INFO) << "line don't match any case:" << line;
+      DLOG(INFO) << "line don't match any case:" << line;
       continue;
     }
     // Expand "$build" variable if avalable;
@@ -631,7 +633,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
       }
     }
 
-    LOG(INFO) << "Add parsed library line, lib:" << lib << ",start:" << start
+    DLOG(INFO) << "Add parsed library line, lib:" << lib << ",start:" << start
               << ", finish:" << finish << ",offset:" << offset;
     result.push_back({lib, start, finish, offset});
   }
@@ -640,7 +642,7 @@ std::vector<LibraryEntry> ParseLibraries(const std::vector<std::string>& map,
   size_t minPC = 0, maxPC = 0;
   maxPC = *std::max_element(std::begin(pcs.data_), std::end(pcs.data_));
 
-  LOG(INFO) << "Add parsed library line, lib:" << programName
+  DLOG(INFO) << "Add parsed library line, lib:" << programName
             << ",start:" << minPC << ", finish:" << maxPC << ",offset:" << 0;
 
   result.push_back({programName, minPC, maxPC, 0ul});
@@ -665,7 +667,7 @@ std::vector<std::string> ExecuteCommand(const std::string& cmd) {
   while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
     result += buffer.data();
   }
-  LOG(INFO) << "Execute command:" << cmd << ",Get result:\n" << result;
+  DLOG(INFO) << "Execute command:" << cmd << ",Get result:\n" << result;
   boost::algorithm::erase_all(result, "\r");
   std::vector<std::string> resultSet;
   boost::split(resultSet, result, [](char c) { return c == '\n'; });
@@ -702,7 +704,7 @@ std::tuple<size_t, size_t, size_t> ParseTextSectinoHeaderFromObjdump(
       break;
     }
   }
-  LOG(INFO) << "Text section header for lib:" << lib << ", size:" << size
+  DLOG(INFO) << "Text section header for lib:" << lib << ", size:" << size
             << ",vma:" << vma << ", fileOffset:" << fileOffset;
   return std::make_tuple(size, vma, fileOffset);
 }
@@ -721,13 +723,13 @@ std::string DebuggingLibrary(const std::string& file) {
         (boost::format("/usr/lib/debug%s.debug") % file).str()};
     for (const auto& f : debugFiles) {
       if (boost::filesystem::exists(f)) {
-        LOG(INFO) << "Find debugging lib:" << f << ", for file:" << file;
+        DLOG(INFO) << "Find debugging lib:" << f << ", for file:" << file;
         // cache.emplace(file, f);
         return f;
       }
     }
   }
-  LOG(INFO) << "Haven't find debugging lib for file:" << file;
+  DLOG(INFO) << "Haven't find debugging lib for file:" << file;
   // cache.emplace(file, std::string{});
   return {};
 }
@@ -812,10 +814,10 @@ Symbols ExtractSymbols(const std::vector<LibraryEntry>& libs,
     std::vector<size_t> contained{startPCIndex, finishPCIndex};
     pcs.erase(startPCIndex, finishPCIndex);
 
-    LOG(INFO) << "Start to extract symbols for lib:" << libName
+    DLOG(INFO) << "Start to extract symbols for lib:" << libName
               << ", get contained pc set:" << std::hex << contained;
     auto addr = AddressSub(entry.start_, entry.offset_);
-    auto future = gThreadPool.submit([libName, addr, contained]() {
+    auto future = gThreadPool.submit([libName = std::move(libName), addr, contained = std::move(contained)]() {
       return MapToSymbols2(libName, addr, contained);
     });
     symbolsFutures.emplace_back(std::move(future));
@@ -838,7 +840,7 @@ void MapToSymbols(const std::string& image, size_t offset,
   if (pcList.empty()) return;
 
   if (!gAddr2lineChecker.exists()) {
-    LOG(INFO) << "addr2line is not installed on system, use nm";
+    DLOG(INFO) << "addr2line is not installed on system, use nm";
     MapSymbolsWithNM(image, offset, pcList, symbols);
     return;
   }
@@ -850,27 +852,49 @@ void MapToSymbols(const std::string& image, size_t offset,
   if (IsValidSepAddress(sepAddress)) {
     auto fullCmd = (boost::format("%s -i --help >/dev/null 2>&1") % cmd).str();
     if (System(fullCmd)) {
-      LOG(INFO) << "addr2line support '-i' options check pass";
+      DLOG(INFO) << "addr2line support '-i' options check pass";
       cmd += " -i";
     } else {
       sepAddress = std::numeric_limits<size_t>::max();
     }
   }
-  /*
+  constexpr size_t kArgumentListMax = 3000;
+  struct Argument {
+    size_t startPcIndex = 0;
     std::vector<std::string> addrs;
-    for (auto pc : pcList) {
-      addrs.emplace_back(toHexStr(AddressSub(pc, offset)));
+  };
 
-      if (IsValidSepAddress(sepAddress)) {
-        addrs.emplace_back(toHexStr(sepAddress));
-      }
+  auto toHexStr = [](size_t x) { return (boost::format("%016x") % x).str(); };
+  std::vector<Argument> arguments;
+
+  Argument currentArgument;
+  for (size_t i = 0, sz = pcList.size(); i < sz; ++i) {
+    if (i && i % kArgumentListMax == 0) {
+      arguments.emplace_back(std::move(currentArgument));
+      currentArgument.startPcIndex = i;
+    } 
+    currentArgument.addrs.emplace_back(toHexStr(AddressSub(pcList[i], offset)));
+    if (IsValidSepAddress(sepAddress)) {
+      currentArgument.addrs.emplace_back(toHexStr(sepAddress));
     }
+  }
+  arguments.emplace_back(std::move(currentArgument));
+
+  /*
+  for (auto pc : pcList) {
+    addrs.emplace_back(toHexStr(AddressSub(pc, offset)));
+
+    if (IsValidSepAddress(sepAddress)) {
+      addrs.emplace_back(toHexStr(sepAddress));
+    }
+  }
   */
 
+  /*
   const std::string tmpFileSym = (boost::format("/tmp/jeprof_cpp%d_%d.sym") %
                                   getpid() % std::this_thread::get_id())
                                      .str();
-  LOG(INFO) << "Write data into tmp sys file:" << tmpFileSym
+  DLOG(INFO) << "Write data into tmp sys file:" << tmpFileSym
             << ", with content:" << std::endl
             << std::hex << pcList;
   std::ofstream ofs(tmpFileSym);
@@ -880,61 +904,88 @@ void MapToSymbols(const std::string& image, size_t offset,
     if (IsValidSepAddress(sepAddress)) ofs << toHexStr(sepAddress) << std::endl;
   }
   ofs.close();
-  LOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
+  */
+  DLOG(INFO) << "sepaddress is:" << IsValidSepAddress(sepAddress);
 
-  // TODO review the original source the command end with |
-  const std::string cmdWithAddresses =
-      (boost::format("%s <%s") % cmd % tmpFileSym).str();
-  auto resultSet = ExecuteCommand(cmdWithAddresses);
-  LOG(INFO) << "Total lines for command result:" << resultSet.size();
+  auto ExtractPartSymbols = [&](const Argument& argument) {
+    Symbols partSymbols;
+    // TODO review the original source the command end with |
+    std::string argumentStr = boost::join(argument.addrs, " ");
+    const std::string cmdWithAddresses =
+      (boost::format("%s %s") % cmd % argumentStr).str();
 
-  size_t count = 0;
-  for (size_t i = 0, resultSize = resultSet.size(); i < resultSize;) {
-    auto line = resultSet[i++];
-    boost::erase_all(line, "\r");
-    std::string fullFunction = line;
+        //(boost::format("%s <%s") % cmd % tmpFileSym).str();
+    auto resultSet = ExecuteCommand(cmdWithAddresses);
+    DLOG(INFO) << "Total lines for command result:" << resultSet.size() << ", result:" << resultSet;
 
-    if (i >= resultSize) {
-      LOG(INFO) << "WARN: this result size is not even:" << resultSize;
-      break;
-    }
-    line = resultSet[i++];
-    boost::erase_all(line, "\r");
-    std::string fileLineNum = line;
+    size_t count = argument.startPcIndex;
+    for (size_t i = 0, resultSize = resultSet.size(); i < resultSize;) {
+      auto line = resultSet[i++];
+      boost::erase_all(line, "\r");
+      std::string fullFunction = line;
 
-    if (IsValidSepAddress(sepAddress) && (fullFunction == kSepSymbol)) {
-      LOG(INFO) << "Meet sepsymbol for pcstr:" << std::hex << pcList[count];
-      ++count;
-      continue;
-    }
-    LOG(INFO) << "Now deal with fullfunction:" << fullFunction
-              << ", fileLineNum" << fileLineNum;
-    // Turn windows-style path into unix-style
-    // boost::replace_all(fileLineNum, R"(\\)", "/");
-    auto pc = pcList[count];
-    std::string function = ShortFunctionName(fullFunction);
-    auto itr = nmSymbols.data_.find(pc);
-    if (itr != nmSymbols.data_.end()) {
-      if (fullFunction == "??") {
-        function = itr->second[0];
-        fullFunction = itr->second[2];
-      } else {
-        // TODO don't understand this line
-        // /^\Q$function\E
-        if (boost::starts_with(itr->second[2], function)) {
+      if (i >= resultSize) {
+        DLOG(INFO) << "WARN: this result size is not even:" << resultSize;
+        break;
+      }
+      line = resultSet[i++];
+      boost::erase_all(line, "\r");
+      std::string fileLineNum = line;
+
+      if (IsValidSepAddress(sepAddress) && (fullFunction == kSepSymbol)) {
+        DLOG(INFO) << "Meet sepsymbol for pcstr:" << std::hex << pcList[count];
+        ++count;
+        continue;
+      }
+      DLOG(INFO) << "Now deal with fullfunction:" << fullFunction
+                << ", fileLineNum" << fileLineNum;
+      // Turn windows-style path into unix-style
+      // boost::replace_all(fileLineNum, R"(\\)", "/");
+      auto pc = pcList[count];
+      std::string function = ShortFunctionName(fullFunction);
+      auto itr = nmSymbols.data_.find(pc);
+      if (itr != nmSymbols.data_.end()) {
+        if (fullFunction == "??") {
           function = itr->second[0];
           fullFunction = itr->second[2];
+        } else {
+          // TODO don't understand this line
+          // /^\Q$function\E
+          if (boost::starts_with(itr->second[2], function)) {
+            function = itr->second[0];
+            fullFunction = itr->second[2];
+          }
         }
+        std::vector<std::string>& sym = partSymbols.data_[pc];
+        sym.insert(sym.begin(), {function, fileLineNum, fullFunction});
+        DLOG(INFO) << (boost::format("cur symbol line:%016x => %s") % pc %
+                      boost::join(sym, " "))
+                         .str();
+        if (!IsValidSepAddress(sepAddress)) ++count;
       }
-      std::vector<std::string>& sym = symbols.data_[pc];
-      sym.insert(sym.begin(), {function, fileLineNum, fullFunction});
-      LOG(INFO) << (boost::format("cur symbol line:%016x => %s") % pc %
-                    boost::join(sym, " "))
-                       .str();
-      if (!IsValidSepAddress(sepAddress)) ++count;
     }
+    return partSymbols;
+  };
+  std::vector<std::future<Symbols>> futures;
+  for (auto& a : arguments) {
+    auto fut = gThreadPool.submit(
+        [a = std::move(a), &ExtractPartSymbols]() { return ExtractPartSymbols(a); });
+    futures.emplace_back(std::move(fut));
   }
-  LOG(INFO) << "Now the symbol is:" << std::hex << symbols.data_;
+  auto MergePartSymbols = [](Symbols& sum, Symbols part) {
+    for (auto& p : part.data_) {
+      auto& sym = sum.data_[p.first];
+      auto& symPart = p.second;
+      using MoveIterator = std::vector<std::string>::iterator;
+      sym.insert(sym.begin(), 
+          std::move_iterator<MoveIterator>(symPart.begin()),
+          std::move_iterator<MoveIterator>(symPart.end()));
+    }
+  };
+  for (auto & f : futures) {
+    MergePartSymbols(symbols, f.get());
+  }
+  DLOG(INFO) << "Now the symbol is:" << std::hex << symbols.data_;
 }
 
 bool MapSymbolsWithNM(const std::string& image, size_t offset,
@@ -942,10 +993,10 @@ bool MapSymbolsWithNM(const std::string& image, size_t offset,
                       size_t* sepAddress) {
   Marker m(__func__);
 
-  LOG(INFO) << "Start map symbols for image:" << image
+  DLOG(INFO) << "Start map symbols for image:" << image
             << ", with offset:" << std::hex << offset;
   auto symbolTable = GetProcedureBoundaries(image, ".", sepAddress);
-  LOG(INFO) << "Get symbol table:" << symbolTable.data_;
+  DLOG(INFO) << "Get symbol table:" << symbolTable.data_;
   if (symbolTable.data_.empty()) return false;
 
   // names sorted by value in symbol table
@@ -962,7 +1013,7 @@ bool MapSymbolsWithNM(const std::string& image, size_t offset,
             [&symbolTable](const auto& lhs, const auto& rhs) {
               return symbolTable.data_[lhs][0] < symbolTable.data_[rhs][0];
             });
-  LOG(INFO) << "Sorted names with value in symboltable:" << names;
+  DLOG(INFO) << "Sorted names with value in symboltable:" << names;
   size_t index = 0;
   auto fullName = names[0];
   auto name = ShortFunctionName(fullName);
@@ -1014,7 +1065,7 @@ SymbolTable GetProcedureBoundaries(const std::string& image,
   Marker m(__func__);
 
   if (image.find_first_of("/.") != 0) {
-    LOG(ERROR) << "Error file name, not start with . or /:" << image;
+    DLOG(ERROR) << "Error file name, not start with . or /:" << image;
     return {};
   }
 
@@ -1072,7 +1123,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
       size_t startVal = std::stoull(start, nullptr, 16);
       size_t lastVal = std::stoull(last, nullptr, 16);
 
-      LOG(INFO) << "Add line into symbol table, name:" << name << std::hex
+      DLOG(INFO) << "Add line into symbol table, name:" << name << std::hex
                 << ", start:" << startVal << ",last:" << lastVal;
       table.data_.emplace(name, std::vector<size_t>{startVal, lastVal});
     }
@@ -1083,7 +1134,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
     static const boost::regex kSymbolPattern(R"(^\s*([0-9a-f]+) (.) (..*))");
     auto matchRes = RegexMatch(line, kSymbolPattern);
     if (!matchRes.empty()) {
-      // LOG(INFO) << "Line matched:" << line;
+      // DLOG(INFO) << "Line matched:" << line;
       auto startVal = matchRes[1];
       char type = (matchRes[2].str())[0];
       std::string thisRoutine = matchRes[3];
@@ -1106,10 +1157,10 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
       routine = thisRoutine;
     } else if (boost::starts_with(line, "Load image name:")) {
       // For windows;
-      LOG(INFO) << "Use Image:";
+      DLOG(INFO) << "Use Image:";
     } else if (boost::starts_with(line, "PDB file name:")) {
       // For windows;
-      LOG(INFO) << "Use PDB:";
+      DLOG(INFO) << "Use PDB:";
     }
   }
   // Deal with last routine
@@ -1179,7 +1230,7 @@ void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
     result[path] += count;
     // AddEntry(result, path, count);
   }
-  LOG(INFO) << "Result after remove uninteresting frames:" << std::hex
+  DLOG(INFO) << "Result after remove uninteresting frames:" << std::hex
             << result;
   // TODO add filter
   // FilterFrames(symbols, result);
@@ -1198,20 +1249,20 @@ void FilterAndPrint(Profile profile, const Symbols& symbols,
   Marker m(__func__);
   std::map<std::string, std::string> fullnameToShortnameMap;
   FillFullnameToshortnameMap(symbols, fullnameToShortnameMap);
-  LOG(INFO) << "Get fullname to shortname map:" << fullnameToShortnameMap;
+  DLOG(INFO) << "Get fullname to shortname map:" << fullnameToShortnameMap;
 
   auto total = TotalProfile(profile.data_);
-  LOG(INFO) << "Total Profile:" << std::hex << total;
+  DLOG(INFO) << "Total Profile:" << std::hex << total;
   RemoveUninterestingFrames(symbols, profile);
-  LOG(INFO) << "After remove unteresting frames:" << std::hex << profile.data_;
+  DLOG(INFO) << "After remove unteresting frames:" << std::hex << profile.data_;
   // auto calls = ExtractCalls(symbols, profile);
-  // LOG(INFO) << "Extracted calls:" << std::hex << calls;
+  // DLOG(INFO) << "Extracted calls:" << std::hex << calls;
   auto reduced = ReduceProfile(symbols, profile, fullnameToShortnameMap);
-  LOG(INFO) << "The reduced profile:" << std::hex << reduced;
+  DLOG(INFO) << "The reduced profile:" << std::hex << reduced;
   auto flat = FlatProfile(reduced);
-  LOG(INFO) << "The flat profile:" << std::hex << flat;
+  DLOG(INFO) << "The flat profile:" << std::hex << flat;
   auto cumulative = CumulativeProfile(reduced);
-  LOG(INFO) << "The cumulative profile:" << std::hex << cumulative;
+  DLOG(INFO) << "The cumulative profile:" << std::hex << cumulative;
 
   PrintDot(FLAGS_program, symbols, profile, flat, cumulative, total,
            fullnameToShortnameMap);
@@ -1304,7 +1355,7 @@ bool PrintDot(
     }
     std::string style;
     if (FLAGS_heapCheck) {
-      LOG(FATAL) << "Not implement";
+      DLOG(FATAL) << "Not implement";
     }
     ofs << boost::format(
                "N%d [label=\"%s\\n%s (%s)%s\\r"
@@ -1439,7 +1490,7 @@ std::map<std::vector<std::string>, size_t> ReduceProfile(
       seen.insert(e);
       path.emplace_back(e);
     }
-    LOG(INFO) << "Reduce line:" << translated << ", into:" << path;
+    DLOG(INFO) << "Reduce line:" << translated << ", into:" << path;
     result[path] += count;
   }
   return result;
@@ -1457,7 +1508,7 @@ std::vector<std::string> TranslateStack(
     // TODO, conbine it define into if
     auto it = symbols.data_.find(a);
     if (it == symbols.data_.end()) {
-      LOG(INFO) << std::hex << "Address not find in symbols:" << a;
+      DLOG(INFO) << std::hex << "Address not find in symbols:" << a;
       const std::string& aStr = (boost::format("%016x") % a).str();
       symList = {aStr, "", aStr};
     } else {
@@ -1493,7 +1544,7 @@ std::vector<std::string> TranslateStack(
       }
     }
   }
-  LOG(INFO) << "Translate addresses:" << std::hex << addrs
+  DLOG(INFO) << "Translate addresses:" << std::hex << addrs
             << ", into:" << result;
   return result;
 }
@@ -1508,7 +1559,7 @@ void FillFullnameToshortnameMap(
     const auto& shortName = s.second[0];
     const auto& fullName = s.second[2];
     if (RegexMatch(fullName, kAddressPattern).empty()) {
-      LOG(INFO) << "Skip function full name not end with address:" << fullName;
+      DLOG(INFO) << "Skip function full name not end with address:" << fullName;
       continue;
     }
     auto it = shortnamesSeenOnce.find(shortName);
@@ -1534,7 +1585,7 @@ void FillFullnameToshortnameMap(
       }
     }
   }
-  LOG(INFO) << "Get full name to short name map:" << fullnameToShortnameMap;
+  DLOG(INFO) << "Get full name to short name map:" << fullnameToShortnameMap;
 }
 
 std::string ExtractSymbolLocation(const Symbols& symbols, size_t addr) {
@@ -1567,7 +1618,7 @@ std::map<std::string, size_t> ExtractCalls(const Symbols& symbols,
       destination = source;
     }
   }
-  LOG(INFO) << "Extract these calls:" << calls;
+  DLOG(INFO) << "Extract these calls:" << calls;
   return calls;
 }
 
@@ -1588,10 +1639,12 @@ int main(int argc, char* argv[]) {
     std::cerr << "Wrong input" << std::endl;
     return 0;
   }
+
   Init();
   auto data = ReadProfile(FLAGS_program, FLAGS_profile);
   Symbols symbolMap;
   MergeSymbols(symbolMap, data.symbols_);
+  std::cout << "Step done ....................." << std::endl;
   // std::map<> sourceCache;
   // std::string profileName = "a.out";
   // std::string fileName = "a.out";
