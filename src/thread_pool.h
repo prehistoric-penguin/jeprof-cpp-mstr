@@ -36,6 +36,8 @@ public:
 
   void call() { impl->call(); }
 
+  operator bool() { return impl.operator bool(); }
+
   function_wrapper(function_wrapper &&other) : impl(std::move(other.impl)) {}
 
   function_wrapper &operator=(function_wrapper &&other) {
@@ -53,6 +55,7 @@ private:
   mutable std::mutex mut;
   std::deque<T> data_queue;
   std::condition_variable data_cond;
+  std::atomic_bool exit_flag{false};
 
 public:
   threadsafe_queue() {}
@@ -72,14 +75,18 @@ public:
   void wait_and_pop(T &value) {
     std::unique_lock<std::mutex> lk(mut);
 
-    data_cond.wait(lk, [this] { return !data_queue.empty(); });
-    value = data_queue.front();
+    data_cond.wait(lk, [this] { 
+        return exit_flag || !data_queue.empty() || exit_flag.load(); 
+    });
+    if (exit_flag.load()) return;
+    value = std::move(data_queue.front());
     data_queue.pop_front();
   }
 
   std::shared_ptr<T> wait_and_pop() {
     std::unique_lock<std::mutex> lk(mut);
-    data_cond.wait(lk, [this] { return !data_queue.empty(); });
+    data_cond.wait(lk, [this] { return exit_flag || !data_queue.empty() || exit_flag.load(); });
+    if (exit_flag) return {};
 
     std::shared_ptr<T> res(std::make_shared<T>(data_queue.front()));
     data_queue.pop_front();
@@ -110,6 +117,12 @@ public:
     std::lock_guard<std::mutex> lk(mut);
     return data_queue.empty();
   }
+
+  void clear() { 
+    exit_flag = true; 
+    std::lock_guard<std::mutex> lk(mut);
+    data_cond.notify_all();
+  }
 };
 
 class thread_pool {
@@ -120,11 +133,8 @@ class thread_pool {
   void worker_thread() {
     while (!done) {
       function_wrapper task;
-      if (work_queue.try_pop(task)) {
-        task();
-      } else {
-        std::this_thread::yield();
-      }
+      work_queue.wait_and_pop(task);
+      if (task) task();
     }
   }
 
@@ -147,6 +157,7 @@ public:
   }
 
   ~thread_pool() {
+    work_queue.clear();
     done = true;
     for (auto &thr : threads)
       thr.join();
