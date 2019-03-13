@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "thread_pool.h"
+#include "mmap_file.h"
 DEFINE_string(program, "", "Name of execuable file");
 DEFINE_string(profile, "", "Name of profile name");
 DEFINE_string(dotFileName, "/tmp/jeprof_cpp.dot", "");
