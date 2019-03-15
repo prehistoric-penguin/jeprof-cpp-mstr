@@ -6,8 +6,6 @@
 #include <future>
 #include <iostream>
 #include <memory>
-#include <memory>
-#include <mutex>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -20,13 +18,14 @@ class function_wrapper {
     virtual ~impl_base() {}
   };
   std::unique_ptr<impl_base> impl;
-  template <typename F> struct impl_type : impl_base {
+  template <typename F>
+  struct impl_type : impl_base {
     F f;
     impl_type(F &&f_) : f(std::move(f_)) {}
     void call() { f(); }
   };
 
-public:
+ public:
   template <typename F>
   function_wrapper(F &&f) : impl(new impl_type<F>(std::move(f))) {}
 
@@ -50,14 +49,15 @@ public:
   function_wrapper &operator=(const function_wrapper &) = delete;
 };
 
-template <typename T> class threadsafe_queue {
-private:
+template <typename T>
+class threadsafe_queue {
+ private:
   mutable std::mutex mut;
   std::deque<T> data_queue;
   std::condition_variable data_cond;
   std::atomic_bool exit_flag{false};
 
-public:
+ public:
   threadsafe_queue() {}
   threadsafe_queue(threadsafe_queue const &other) {
     std::lock_guard<std::mutex> lk(other.mut);
@@ -75,8 +75,8 @@ public:
   void wait_and_pop(T &value) {
     std::unique_lock<std::mutex> lk(mut);
 
-    data_cond.wait(lk, [this] { 
-        return exit_flag || !data_queue.empty() || exit_flag.load(); 
+    data_cond.wait(lk, [this] {
+      return exit_flag || !data_queue.empty() || exit_flag.load();
     });
     if (exit_flag.load()) return;
     value = std::move(data_queue.front());
@@ -85,7 +85,9 @@ public:
 
   std::shared_ptr<T> wait_and_pop() {
     std::unique_lock<std::mutex> lk(mut);
-    data_cond.wait(lk, [this] { return exit_flag || !data_queue.empty() || exit_flag.load(); });
+    data_cond.wait(lk, [this] {
+      return exit_flag || !data_queue.empty() || exit_flag.load();
+    });
     if (exit_flag) return {};
 
     std::shared_ptr<T> res(std::make_shared<T>(data_queue.front()));
@@ -96,17 +98,16 @@ public:
 
   bool try_pop(T &value) {
     std::lock_guard<std::mutex> lk(mut);
-    if (data_queue.empty())
-      return false;
+    if (data_queue.empty()) return false;
     value = std::move(data_queue.front());
     data_queue.pop_front();
+
     return true;
   }
 
   std::shared_ptr<T> try_pop() {
     std::lock_guard<std::mutex> lk(mut);
-    if (data_queue.empty())
-      return std::shared_ptr<T>();
+    if (data_queue.empty()) return std::shared_ptr<T>();
     std::shared_ptr<T> res(std::make_shared<T>(data_queue.front()));
     data_queue.pop_front();
 
@@ -118,8 +119,8 @@ public:
     return data_queue.empty();
   }
 
-  void clear() { 
-    exit_flag = true; 
+  void clear() {
+    exit_flag = true;
     std::lock_guard<std::mutex> lk(mut);
     data_cond.notify_all();
   }
@@ -129,16 +130,21 @@ class thread_pool {
   std::atomic_bool done;
   threadsafe_queue<function_wrapper> work_queue;
   std::vector<std::thread> threads;
+  std::atomic_int running_jobs{0};
 
   void worker_thread() {
     while (!done) {
       function_wrapper task;
       work_queue.wait_and_pop(task);
-      if (task) task();
+      if (task) {
+        ++running_jobs;
+        task();
+      }
+      --running_jobs;
     }
   }
 
-public:
+ public:
   thread_pool(size_t pool_size = 0) : done(false) {
     size_t thread_count = 0;
     if (!pool_size) {
@@ -159,13 +165,12 @@ public:
   ~thread_pool() {
     work_queue.clear();
     done = true;
-    for (auto &thr : threads)
-      thr.join();
+    for (auto &thr : threads) thr.join();
   }
 
   template <typename FunctionType>
-  std::future<typename std::result_of<FunctionType()>::type>
-  submit(FunctionType f) {
+  std::future<typename std::result_of<FunctionType()>::type> submit(
+      FunctionType f) {
     typedef typename std::result_of<FunctionType()>::type result_type;
 
     std::packaged_task<result_type()> task(std::move(f));
@@ -211,4 +216,4 @@ void parallel_fill(Iterator first, Iterator last, T val) {
     futures[i].get();
   }
 }
-} // namespace
+}  // namespace detail

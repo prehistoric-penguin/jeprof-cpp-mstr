@@ -1,12 +1,12 @@
 #pragma once
 
 #include <fcntl.h>
-#include <stdexcept>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdexcept>
 
 #include <atomic>
 #include <boost/algorithm/string.hpp>
@@ -31,9 +31,10 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <glog/logging.h>
 
 class MmapReadableFile {
-public:
+ public:
   static size_t GetFileSize(const std::string &filename) {
     struct ::stat file_stat;
     if (::stat(filename.c_str(), &file_stat) != 0) {
@@ -51,10 +52,9 @@ public:
     }
     void *mmap_base =
         ::mmap(/*addr=*/nullptr, file_size, PROT_READ, MAP_SHARED, fd, 0);
-    std::cerr << "Start address of map file:" << std::hex << mmap_base
+    DLOG(INFO) << "Start address of map file:" << std::hex << mmap_base
               << ", end address:"
-              << (void *)(reinterpret_cast<char *>(mmap_base) + file_size)
-              << std::endl;
+              << (void *)(reinterpret_cast<char *>(mmap_base) + file_size);
     if (mmap_base != MAP_FAILED) {
       return std::make_unique<MmapReadableFile>(
           filename, reinterpret_cast<char *>(mmap_base), file_size);
@@ -66,8 +66,9 @@ public:
   // must be the result of a successful call to mmap(). This instances takes
   // over the ownership of the region.
   MmapReadableFile(std::string filename, char *mmap_base, size_t length)
-      : mmap_base_(mmap_base), length_(length), filename_(std::move(filename)) {
-  }
+      : mmap_base_(mmap_base),
+        length_(length),
+        filename_(std::move(filename)) {}
 
   ~MmapReadableFile() { ::munmap(static_cast<void *>(mmap_base_), length_); }
 
@@ -99,7 +100,7 @@ public:
     return refs;
   }
 
-private:
+ private:
   char *const mmap_base_;
   const size_t length_;
   const std::string filename_;
