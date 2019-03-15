@@ -2,6 +2,7 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <glog/stl_logging.h>
+#include <gperftools/profiler.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <boost/algorithm/string.hpp>
@@ -21,11 +22,11 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <queue>
 #include <regex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <queue>
 #include <vector>
 
 #include "mmap_file.h"
@@ -76,19 +77,22 @@ const std::string kTmpFilePs = "/tmp/jeprof$$";
 std::string gProfileType;
 
 detail::thread_pool gThreadPool;
-struct HashVector {
+
+namespace std {
+template <>
+struct hash<std::vector<size_t>> {
   size_t operator()(const std::vector<size_t>& vec) const {
     return boost::hash_value(vec);
   }
 };
-
+}  // namespace std
+using ProfileMap = std::unordered_map<std::vector<size_t>, size_t>;
 struct Profile {
   void AddEntry(const std::vector<size_t>& stack, size_t count) {
     std::lock_guard<std::mutex> guard(mutex_);
     data_[stack] += count;
   }
-  using ProfileMap =
-      std::unordered_map<std::vector<size_t>, size_t, HashVector>;
+
   ProfileMap data_;
   std::mutex mutex_;
 };
@@ -238,7 +242,7 @@ SymbolTable GetProcedureBoundariesViaNm(const std::string& cmd,
                                         const std::string& regex,
                                         size_t* ptr = nullptr);
 std::string ShortFunctionName(const std::string&);
-void FilterAndPrint(Profile& profile, const Symbols& symbols,
+void FilterAndPrint(Profile& profile, Symbols& symbols,
                     const std::vector<LibraryEntry>& libs,
                     const std::vector<std::string>& threads);
 void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile);
@@ -250,7 +254,7 @@ void FillFullnameToshortnameMap(
     const Symbols& symbols,
     std::map<std::string, std::string>& fullnameToShortnameMap);
 // TODO, combine these two function into one
-size_t TotalProfile(const Profile::ProfileMap& data) {
+size_t TotalProfile(const ProfileMap& data) {
   return std::accumulate(
       data.begin(), data.end(), 0ull,
       [](size_t sum, const auto& p) { return sum + p.second; });
@@ -264,11 +268,11 @@ void FillFullnameToshortnameMap(
     const Symbols& symbols,
     std::map<std::string, std::string>& fullnameToShortnameMap);
 std::vector<std::string> TranslateStack(
-    const Symbols& symbols,
+    Symbols& symbols,
     const std::map<std::string, std::string>& fullnameToShortnameMap,
     const std::vector<size_t>& addrs);
 std::map<std::vector<std::string>, size_t> ReduceProfile(
-    const Symbols& symbols, const Profile& profile,
+    Symbols& symbols, const Profile& profile,
     const std::map<std::string, std::string>&);
 std::map<std::string, size_t> CumulativeProfile(
     const std::map<std::vector<std::string>, size_t>& profile);
@@ -277,7 +281,7 @@ std::map<std::string, size_t> FlatProfile(
 std::string Units();
 std::string Unparse(size_t num);
 std::string Percent(double num, double tot);
-bool PrintDot(const std::string& prog, const Symbols& symbols, Profile& raw,
+bool PrintDot(const std::string& prog, Symbols& symbols, Profile& raw,
               const std::map<std::string, size_t>& flat,
               const std::map<std::string, size_t>& cumulative,
               size_t overallTotal, const std::map<std::string, std::string>&);
@@ -325,7 +329,7 @@ boost::string_ref ReadProfileHeader(
   if (!std::isprint(firstChar)) return {};
 
   std::string line;
-  for (;itr != end; ++itr) {
+  for (; itr != end; ++itr) {
     // or use itr->starts_with
     if (boost::starts_with(*itr, "%warn")) {
       DLOG(INFO) << "WARNING:" << line;
@@ -490,14 +494,16 @@ Context ReadThreadedHeapProfile(
     if (!matchRes1.empty()) {
       // stack is empty for the first call stack entry
       if (!currentProfile.stack_.empty()) {
-        auto fut = gThreadPool.submit([currentProfile = std::move(currentProfile), &profile,
-          &threadProfiles, &pcs, ParseOneStack]() {
-          ParseOneStack(std::move(currentProfile), *profile, *threadProfiles,
-                        *pcs);
-        });
+        auto fut = gThreadPool.submit(
+            [currentProfile = std::move(currentProfile), &profile,
+             &threadProfiles, &pcs, ParseOneStack]() {
+              ParseOneStack(std::move(currentProfile), *profile,
+                            *threadProfiles, *pcs);
+            });
         parseFutures.emplace_back(std::move(fut));
       }
-      currentProfile.stack_ = {matchRes1[1].first, static_cast<size_t>(matchRes1[1].length())};
+      currentProfile.stack_ = {matchRes1[1].first,
+                               static_cast<size_t>(matchRes1[1].length())};
       // stack = matchRes1[1];
       // fixedCallerStack = FixCallerAddresses(stack);
       continue;
@@ -507,10 +513,10 @@ Context ReadThreadedHeapProfile(
     if (currentProfile.stack_.empty()) continue;
     currentProfile.threadData_.emplace_back(line);
   }
-  auto fut = gThreadPool.submit([currentProfile = std::move(currentProfile), &profile,
-    &threadProfiles, &pcs, ParseOneStack]() {
-    ParseOneStack(std::move(currentProfile), *profile, *threadProfiles,
-                  *pcs);
+  auto fut = gThreadPool.submit([currentProfile = std::move(currentProfile),
+                                 &profile, &threadProfiles, &pcs,
+                                 ParseOneStack]() {
+    ParseOneStack(std::move(currentProfile), *profile, *threadProfiles, *pcs);
   });
   parseFutures.emplace_back(std::move(fut));
 
@@ -1295,6 +1301,7 @@ const std::string kSkipFunctions[] = {
 
 void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
   Marker m(__func__);
+  ProfilerStart(__func__);
 
   const std::string skipRegexPattern = "NOMATCH";
 
@@ -1310,10 +1317,10 @@ void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
   if (gProfileType == "cup") {
     // skiped logic
   }
-  Profile::ProfileMap result;
+  ProfileMap result;
+  std::vector<size_t> path;
   for (const auto& p : profile.data_) {
     size_t count = p.second;
-    std::vector<size_t> path;
     for (size_t addr : p.first) {
       auto it = symbols.data_.find(addr);
       if (it != symbols.data_.end()) {
@@ -1325,14 +1332,15 @@ void RemoveUninterestingFrames(const Symbols& symbols, Profile& profile) {
       }
       path.emplace_back(addr);
     }
-    result[path] += count;
+    result[std::move(path)] += count;
     // AddEntry(result, path, count);
   }
   DLOG(INFO) << "Result after remove uninteresting frames:" << std::hex
              << result;
   // TODO add filter
   // FilterFrames(symbols, result);
-  profile.data_ = result;
+  profile.data_ = std::move(result);
+  ProfilerFlush();
 }
 
 void FilterFrames(const Symbols& symbols, Profile& profile) {
@@ -1341,7 +1349,7 @@ void FilterFrames(const Symbols& symbols, Profile& profile) {
   // TODO add remain logic
 }
 
-void FilterAndPrint(Profile& profile, const Symbols& symbols,
+void FilterAndPrint(Profile& profile, Symbols& symbols,
                     const std::vector<LibraryEntry>& libs,
                     const std::vector<std::string>& threads) {
   Marker m(__func__);
@@ -1367,11 +1375,12 @@ void FilterAndPrint(Profile& profile, const Symbols& symbols,
 }
 
 bool PrintDot(
-    const std::string& prog, const Symbols& symbols, Profile& raw,
+    const std::string& prog, Symbols& symbols, Profile& raw,
     const std::map<std::string, size_t>& flatMap,
     const std::map<std::string, size_t>& cumulativeMap, size_t overallTotal,
     const std::map<std::string, std::string>& fullnameToShortnameMap) {
   Marker m(__func__);
+  ProfilerStart(__func__);
 
   auto flat = flatMap;
   auto cumulative = cumulativeMap;
@@ -1525,6 +1534,7 @@ bool PrintDot(
                node[src] % node[dst] % Unparse(n) % edgeWeight % style;
   }
   ofs << "}\n";
+  ProfilerFlush();
   return true;
 }
 
@@ -1561,6 +1571,7 @@ std::map<std::string, size_t> FlatProfile(
 std::map<std::string, size_t> CumulativeProfile(
     const std::map<std::vector<std::string>, size_t>& profile) {
   Marker m(__func__);
+  ProfilerStart(__func__);
 
   std::map<std::string, size_t> result;
   for (const auto& p : profile) {
@@ -1568,14 +1579,15 @@ std::map<std::string, size_t> CumulativeProfile(
       result[a] += p.second;
     }
   }
+  ProfilerFlush();
   return result;
 }
 
 std::map<std::vector<std::string>, size_t> ReduceProfile(
-    const Symbols& symbols, const Profile& profile,
+    Symbols& symbols, const Profile& profile,
     const std::map<std::string, std::string>& fullnameToShortnameMap) {
   Marker m(__func__);
-
+  ProfilerStart(__func__);
   std::map<std::vector<std::string>, size_t> result;
   for (const auto& p : profile.data_) {
     auto count = p.second;
@@ -1591,28 +1603,24 @@ std::map<std::vector<std::string>, size_t> ReduceProfile(
     DLOG(INFO) << "Reduce line:" << translated << ", into:" << path;
     result[path] += count;
   }
+  ProfilerFlush();
   return result;
 }
 
 std::vector<std::string> TranslateStack(
-    const Symbols& symbols,
+    Symbols& symbols,
     const std::map<std::string, std::string>& fullnameToShortnameMap,
     const std::vector<size_t>& addrs) {
   std::vector<std::string> result;
   for (size_t i = 0, sz = addrs.size(); i < sz; ++i) {
     size_t a = addrs[i];
-    // if opt_disasm opt_list
-    std::vector<std::string> symList;
-    // TODO, conbine it define into if
-    auto it = symbols.data_.find(a);
-    if (it == symbols.data_.end()) {
-      DLOG(INFO) << std::hex << "Address not find in symbols:" << a;
+    // If the symbols does not exist, we add a address based symbol
+    std::vector<std::string>& symList = symbols.data_[a];
+    if (symList.empty()) {
       const std::string& aStr = (boost::format("%016x") % a).str();
+      DLOG(INFO) << std::hex << "Address not find in symbols:" << a;
       symList = {aStr, "", aStr};
-    } else {
-      symList = it->second;
     }
-
     for (int j = static_cast<int>(symList.size() - 1); j >= 2; j -= 3) {
       std::string func = symList[j - 2];
       // const auto& fileLine = symList[j - 1];

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <stdexcept>
 
+#include <glog/logging.h>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/finder.hpp>
@@ -31,7 +32,6 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
-#include <glog/logging.h>
 
 class MmapReadableFile {
  public:
@@ -53,8 +53,8 @@ class MmapReadableFile {
     void *mmap_base =
         ::mmap(/*addr=*/nullptr, file_size, PROT_READ, MAP_SHARED, fd, 0);
     DLOG(INFO) << "Start address of map file:" << std::hex << mmap_base
-              << ", end address:"
-              << (void *)(reinterpret_cast<char *>(mmap_base) + file_size);
+               << ", end address:"
+               << (void *)(reinterpret_cast<char *>(mmap_base) + file_size);
     if (mmap_base != MAP_FAILED) {
       return std::make_unique<MmapReadableFile>(
           filename, reinterpret_cast<char *>(mmap_base), file_size);
