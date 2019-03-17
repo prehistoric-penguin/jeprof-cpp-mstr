@@ -1,0 +1,22 @@
+#
+# - Try to find TCMalloc
+# This will define
+# TCMALLOC_FOUND
+# TCMALLOC_INCLUDE_DIR
+# TCMALLOC_LIBRARIES
+#
+
+find_path(TCMALLOC_INCLUDE_DIR "gperftools/tcmalloc.h")
+find_library(TCMALLOC_LIBRARY tcmalloc)
+
+set(TCMALLOC_LIBRARIES ${TCMALLOC_LIBRARY})
+
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(
+    TCMALLOC DEFAULT_MSG TCMALLOC_INCLUDE_DIR TCMALLOC_LIBRARIES)
+
+mark_as_advanced(TCMALLOC_INCLUDE_DIR TCMALLOC_LIBRARIES TCMALLOC_FOUND)
+
+if(TCMALLOC_FOUND AND NOT TCMALLOC_FIND_QUIETLY)
+    message(STATUS "TCMALLOC: ${TCMALLOC_INCLUDE_DIR}")
+endif()
