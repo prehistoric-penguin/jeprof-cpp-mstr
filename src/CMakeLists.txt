@@ -11,5 +11,6 @@ target_link_libraries(
   ${Boost_FILESYSTEM_LIBRARY}
   ${Boost_SYSTEM_LIBRARY}
   ${Boost_REGEX_LIBRARY}
+  ${TCMALLOC_LIBRARIES}
 	Threads::Threads
 )

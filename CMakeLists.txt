@@ -9,10 +9,12 @@ find_package(Boost COMPONENTS system filesystem regex REQUIRED)
 find_package(GTest REQUIRED) 
 find_package(GFlags REQUIRED)
 find_package(GLog REQUIRED) 
+find_package(TCmalloc REQUIRED)
 
 #link_libraries(-static-libstdc++ -static-libgcc)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -O0 -g3")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall -g3")
+set(CMAKE_CXX_FLAGS_RELEASE 
+  "${CMAKE_CXX_FLAGS_RELEASE} -Wall -g3 -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
   message(STATUS "** It's debug mode **")
