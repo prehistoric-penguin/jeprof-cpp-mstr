@@ -14,7 +14,7 @@ DEFINE_int32(primElongation, 3,
              "Elongation parameter for random prim algorithm");
 DEFINE_int32(mallocSize, 64, "Parameter for malloc function");
 DEFINE_int32(randomLoops, 10000, "Loop count in generated main function");
-
+DEFINE_int32(threads, 8, "Thread number of the pool to run");
 std::string FunctionName(size_t i) { return "fun_" + std::to_string(i); }
 
 class Function {
@@ -147,26 +147,27 @@ void Printer::PrintDefinition(const Program &program) {
 
 void Printer::PrintMain(const Program &program) {
   std::string functionTemplate =
-      "int main(int argc, char* argv[]) {\n"
-      "  std::vector<std::function<void()>> functions = {\n"
-      "    %s\n"
-      "  };\n"
-      "  std::vector<std::thread> threads;\n"
-      "  const size_t kRunLoops = %d;\n"
-      "  for (size_t i = 0;i < std::thread::hardware_concurrency(); ++i) {\n"
-      "    threads.emplace_back(std::thread([&functions, kRunLoops](){\n"
-      "      std::random_device rd;\n"
-      "      std::uniform_int_distribution<int> dist(0, functions.size() - "
-      "1);\n"
-      "      for (size_t j = 0; j < kRunLoops; ++j) {\n"
-      "        functions[dist(rd)]();\n"
-      "      }\n"
-      "    }));\n"
-      "  }\n"
-      "  for (auto& t :threads) t.join();\n"
-      "\n"
-      "  return 0;\n"
-      "}";
+R"(
+int main(int argc, char* argv[]) {
+  std::vector<std::function<void()>> functions = {
+    %s
+  };
+  std::vector<std::thread> threads;
+  const size_t kRunLoops = %d;
+  for (size_t i = 0;i < %d; ++i) {
+    threads.emplace_back(std::thread([&functions, kRunLoops](){
+      std::random_device rd;
+      std::uniform_int_distribution<int> dist(0, functions.size() - 1);
+      for (size_t j = 0; j < kRunLoops; ++j) {
+        functions[dist(rd)]();
+      }
+    }));
+  }
+  for (auto& t :threads) t.join();
+
+  return 0;
+};
+)";
 
   std::vector<std::string> functionCallStatments;
   std::transform(std::begin(program.program_), std::end(program.program_),
@@ -179,7 +180,7 @@ void Printer::PrintMain(const Program &program) {
       boost::algorithm::join(functionCallStatments, kTailIndent);
 
   std::cout << (boost::format(functionTemplate) % functionList %
-                FLAGS_randomLoops)
+                FLAGS_randomLoops % FLAGS_threads)
             << std::endl;
 }
 
