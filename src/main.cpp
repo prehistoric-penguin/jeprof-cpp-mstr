@@ -81,6 +81,7 @@ const std::string kTmpFilePs = "/tmp/jeprof$$";
 std::string gProfileType;
 
 detail::thread_pool gThreadPool;
+detail::thread_pool gSubThreadPool;
 
 namespace boost {
 inline size_t hash_value(const boost::string_ref& r) {
@@ -1090,7 +1091,7 @@ void MapToSymbols(const std::string& image, size_t offset,
   };
   std::vector<std::future<Symbols>> futures;
   for (auto& a : arguments) {
-    auto fut = gThreadPool.submit([a = std::move(a), &ExtractPartSymbols]() {
+    auto fut = gSubThreadPool.submit([a = std::move(a), &ExtractPartSymbols]() {
       return ExtractPartSymbols(a);
     });
     futures.emplace_back(std::move(fut));

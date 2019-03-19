@@ -11,14 +11,17 @@ find_package(GFlags REQUIRED)
 find_package(GLog REQUIRED) 
 find_package(TCmalloc REQUIRED)
 
+if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
+  message(STATUS "** It's debug mode **")
+else ()
+  set (CMAKE_BUILD_TYPE Release)
+endif()
+
 #link_libraries(-static-libstdc++ -static-libgcc)
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -O0 -g3")
 set(CMAKE_CXX_FLAGS_RELEASE 
   "${CMAKE_CXX_FLAGS_RELEASE} -Wall -g3 -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 
-if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
-  message(STATUS "** It's debug mode **")
-endif()
 
 set(CMAKE_CXX_STANDARD 14)
 add_definitions("-D_GLIBCXX_USE_CXX11_ABI=1")
