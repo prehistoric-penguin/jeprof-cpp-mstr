@@ -7,7 +7,7 @@
 #
 
 find_path(GFLAGS_INCLUDE_DIR "gflags/gflags.h")
-find_library(GFLAGS_LIBRARY gflags)
+find_library(GFLAGS_LIBRARY libgflags.a)
 
 set(GFLAGS_LIBRARIES ${GFLAGS_LIBRARY})
 

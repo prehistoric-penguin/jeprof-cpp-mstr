@@ -7,7 +7,7 @@
 #
 
 find_path(TCMALLOC_INCLUDE_DIR "gperftools/tcmalloc.h")
-find_library(TCMALLOC_LIBRARY tcmalloc)
+find_library(TCMALLOC_LIBRARY libtcmalloc.a)
 
 set(TCMALLOC_LIBRARIES ${TCMALLOC_LIBRARY})
 

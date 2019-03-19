@@ -1,5 +1,5 @@
 find_path(LIBGLOG_INCLUDE_DIR glog/logging.h)
-find_library(LIBGLOG_LIBRARY glog)
+find_library(LIBGLOG_LIBRARY libglog.a)
 
 set(LIBGLOG_LIBRARIES ${LIBGLOG_LIBRARY})
 
