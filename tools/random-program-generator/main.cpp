@@ -23,7 +23,10 @@ class Function {
     static const std::string allocStatement =
         (boost::format("void * ptr = malloc(%d);") % FLAGS_mallocSize).str();
     statements_.emplace_back(allocStatement);
+    statements_.emplace_back(
+        (boost::format("gTotal += %d;") % FLAGS_mallocSize).str());
   }
+
   std::string Name() const { return name_; }
   const std::vector<std::string> &Statements() const { return statements_; }
   const std::set<std::string> &Visited() const { return visited_; }
@@ -99,13 +102,17 @@ class Printer {
 
 void Printer::PrintHeader(const Program &program) {
   const std::string header =
-      "#include <iostream>\n"
-      "#include <memory>\n"
-      "#include <thread>\n"
-      "#include <random>\n"
-      "#include <vector>\n"
-      "#include <cstdlib>\n"
-      "#include <functional>\n";
+      R"(
+#include <atomic>
+#include <cstdlib>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <random>
+#include <thread>
+#include <vector>
+std::atomic_size_t gTotal = {0};
+)";
 
   std::cout << header << std::endl;
 }
@@ -147,7 +154,7 @@ void Printer::PrintDefinition(const Program &program) {
 
 void Printer::PrintMain(const Program &program) {
   std::string functionTemplate =
-R"(
+      R"(
 int main(int argc, char* argv[]) {
   std::vector<std::function<void()>> functions = {
     %s
@@ -164,6 +171,8 @@ int main(int argc, char* argv[]) {
     }));
   }
   for (auto& t :threads) t.join();
+
+  std::cout << "Total memory leaked:" << gTotal << std::endl;
 
   return 0;
 };
