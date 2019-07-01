@@ -23,6 +23,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <numeric>
 #include <queue>
 #include <regex>
 #include <string>
@@ -1571,7 +1572,7 @@ bool PrintDot(
     bool keep = false;
     if (inDegree[dst] == 0) {
       keep = true;
-    } else if (static_cast<size_t>(abs(n)) <= edgeLimit) {
+    } else if (static_cast<size_t>(abs(static_cast<long long>(n))) <= edgeLimit) {
       keep = false;
     } else if (outDegree[src] >= static_cast<size_t>(FLAGS_maxDegree) ||
                inDegree[dst] >= static_cast<size_t>(FLAGS_maxDegree)) {
