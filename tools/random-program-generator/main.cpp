@@ -21,8 +21,9 @@ class Function {
  public:
   Function(std::string name) : name_(name) {
     static const std::string allocStatement =
-        (boost::format("void * ptr = malloc(%d);") % FLAGS_mallocSize).str();
+        (boost::format("void* ptr = malloc(%d);") % FLAGS_mallocSize).str();
     statements_.emplace_back(allocStatement);
+    statements_.emplace_back("(void)ptr;");
     statements_.emplace_back(
         (boost::format("gTotal += %d;") % FLAGS_mallocSize).str());
   }
@@ -162,7 +163,7 @@ int main(int argc, char* argv[]) {
   std::vector<std::thread> threads;
   const size_t kRunLoops = %d;
   for (size_t i = 0;i < %d; ++i) {
-    threads.emplace_back(std::thread([&functions, kRunLoops](){
+    threads.emplace_back(std::thread([&functions](){
       std::random_device rd;
       std::uniform_int_distribution<int> dist(0, functions.size() - 1);
       for (size_t j = 0; j < kRunLoops; ++j) {
